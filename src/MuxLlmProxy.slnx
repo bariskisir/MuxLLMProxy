@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="MuxLlmProxy.Cli/MuxLlmProxy.Cli.csproj" />
+  <Project Path="MuxLlmProxy.Core/MuxLlmProxy.Core.csproj" />
+  <Project Path="MuxLlmProxy.Host/MuxLlmProxy.Host.csproj" />
+  <Project Path="MuxLlmProxy.Infrastructure/MuxLlmProxy.Infrastructure.csproj" />
+</Solution>

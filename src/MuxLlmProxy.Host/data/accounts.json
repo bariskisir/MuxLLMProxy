@@ -1,0 +1,13 @@
+[
+  {
+    "id": "opencode_20251231_235959",
+    "providerType": "opencode",
+    "enabled": true,
+    "token": "public",
+    "access": null,
+    "refresh": null,
+    "expire": null,
+    "availableAtRateLimit": null,
+    "availableAtWeeklyLimit": null
+  }
+]

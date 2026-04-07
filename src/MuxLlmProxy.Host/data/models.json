@@ -1,0 +1,62 @@
+[
+  {
+    "providerId": "openrouter",
+    "id": "openrouter/free",
+    "name": "OpenRouter - Free"
+  },
+  {
+    "providerId": "openrouter",
+    "id": "qwen/qwen3.6-plus:free",
+    "name": "OpenRouter - Qwen 3.6 Plus Free"
+  },
+  {
+    "providerId": "openrouter",
+    "id": "stepfun/step-3.5-flash:free",
+    "name": "OpenRouter - Step 3.5 Flash Free"
+  },
+  {
+    "providerId": "chatgpt",
+    "id": "gpt-5.4",
+    "name": "GPT-5.4"
+  },
+  {
+    "providerId": "chatgpt",
+    "id": "gpt-5.4-mini",
+    "name": "GPT-5.4 Mini"
+  },
+  {
+    "providerId": "chatgpt",
+    "id": "gpt-5.3-codex",
+    "name": "GPT-5.3 Codex"
+  },
+  {
+    "providerId": "chatgpt",
+    "id": "gpt-5.2-codex",
+    "name": "GPT-5.2 Codex"
+  },
+  {
+    "providerId": "chatgpt",
+    "id": "gpt-5.2",
+    "name": "GPT-5.2"
+  },
+  {
+    "providerId": "chatgpt",
+    "id": "gpt-5.1-codex-max",
+    "name": "GPT-5.1 Codex Max"
+  },
+  {
+    "providerId": "chatgpt",
+    "id": "gpt-5.1-codex-mini",
+    "name": "GPT-5.1 Codex Mini"
+  },
+  {
+    "providerId": "opencode",
+    "id": "minimax-m2.5-free",
+    "name": "OpenCode - MiniMax M2.5 Free"
+  },
+  {
+    "providerId": "opencode",
+    "id": "qwen3.6-plus-free",
+    "name": "OpenCode - Qwen 3.6 Plus Free"
+  }
+]
