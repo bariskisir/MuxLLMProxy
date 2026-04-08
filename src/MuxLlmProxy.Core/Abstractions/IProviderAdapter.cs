@@ -29,11 +29,11 @@ public interface IProviderAdapter
     /// <param name="target">The selected target.</param>
     /// <param name="request">The normalized proxy request.</param>
     /// <param name="response">The upstream response message.</param>
-    /// <param name="body">The fully buffered upstream response body.</param>
+    /// <param name="body">The fully buffered upstream response body when buffering is required.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The translated upstream response.</returns>
     /// <exception cref="InvalidOperationException">Thrown when the upstream payload cannot be translated.</exception>
-    Task<ProxyResponse> TranslateResponseAsync(ProxyTarget target, ProxyRequest request, HttpResponseMessage response, byte[] body, CancellationToken cancellationToken);
+    Task<ProxyResponse> TranslateResponseAsync(ProxyTarget target, ProxyRequest request, HttpResponseMessage response, byte[]? body, CancellationToken cancellationToken);
 
     /// <summary>
     /// Returns an optional provider limit snapshot for an account.

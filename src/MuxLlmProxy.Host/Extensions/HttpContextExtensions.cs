@@ -24,7 +24,17 @@ public static class HttpContextExtensions
             context.Response.Headers[header.Key] = header.Value;
         }
 
-        await context.Response.Body.WriteAsync(response.Body);
+        if (response.WriteBodyAsync is not null)
+        {
+            await response.WriteBodyAsync(context.Response.Body, context.RequestAborted);
+            await context.Response.Body.FlushAsync(context.RequestAborted);
+            return;
+        }
+
+        if (response.Body is not null && response.Body.Length > 0)
+        {
+            await context.Response.Body.WriteAsync(response.Body, context.RequestAborted);
+        }
     }
 
     /// <summary>

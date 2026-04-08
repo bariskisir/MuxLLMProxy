@@ -79,15 +79,24 @@ public static class ProxyEndpoints
         }
         catch (Exception exception) when (exception is InvalidOperationException || exception is JsonException || exception is ArgumentException)
         {
-            await context.WriteErrorAsync(StatusCodes.Status400BadRequest, "validation_error", exception);
+            if (!context.Response.HasStarted)
+            {
+                await context.WriteErrorAsync(StatusCodes.Status400BadRequest, "validation_error", exception);
+            }
         }
         catch (HttpRequestException exception)
         {
-            await context.WriteErrorAsync(StatusCodes.Status502BadGateway, "upstream_error", exception);
+            if (!context.Response.HasStarted)
+            {
+                await context.WriteErrorAsync(StatusCodes.Status502BadGateway, "upstream_error", exception);
+            }
         }
         catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
-            await context.WriteErrorAsync(StatusCodes.Status504GatewayTimeout, "timeout_error", exception);
+            if (!context.Response.HasStarted)
+            {
+                await context.WriteErrorAsync(StatusCodes.Status504GatewayTimeout, "timeout_error", exception);
+            }
         }
     }
 

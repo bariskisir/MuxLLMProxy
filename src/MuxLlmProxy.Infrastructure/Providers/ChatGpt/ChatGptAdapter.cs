@@ -79,50 +79,60 @@ public sealed partial class ChatGptAdapter : IProviderAdapter
     /// <param name="body">The buffered upstream response body.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The translated proxy response.</returns>
-    public Task<ProxyResponse> TranslateResponseAsync(ProxyTarget target, ProxyRequest request, HttpResponseMessage response, byte[] body, CancellationToken cancellationToken)
+    public async Task<ProxyResponse> TranslateResponseAsync(ProxyTarget target, ProxyRequest request, HttpResponseMessage response, byte[]? body, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(response);
-        ArgumentNullException.ThrowIfNull(body);
 
         if (!response.IsSuccessStatusCode)
         {
             var contentType = response.Content.Headers.ContentType?.ToString() ?? ProxyConstants.ContentTypes.Json;
-            return Task.FromResult(new ProxyResponse
+            return new ProxyResponse
             {
                 StatusCode = (int)response.StatusCode,
                 Headers = ProviderHttpUtilities.CreateJsonHeaders(contentType),
-                Body = body
-            });
+                Body = body ?? await response.Content.ReadAsByteArrayAsync(cancellationToken)
+            };
         }
 
-        var chatCompletionsStream = ConvertResponseStreamToChatCompletions(body, request.Model);
+        if (request.Stream && request.Format == ProxyFormat.OpenAi)
+        {
+            return new ProxyResponse
+            {
+                StatusCode = (int)response.StatusCode,
+                Headers = ProviderHttpUtilities.CreateJsonHeaders(ProxyConstants.ContentTypes.EventStreamUtf8),
+                WriteBodyAsync = (output, ct) => WriteOpenAiStreamAsync(response, output, request.Model, ct)
+            };
+        }
+
+        var bufferedBody = body ?? await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        var chatCompletionsStream = ConvertResponseStreamToChatCompletions(bufferedBody, request.Model);
 
         if (request.Format == ProxyFormat.OpenAi)
         {
             var translatedBody = request.Stream
                 ? chatCompletionsStream
-                : ConvertResponseToChatCompletion(ExtractCompletedResponse(body), request.Model);
+                : ConvertResponseToChatCompletion(ExtractCompletedResponse(bufferedBody), request.Model);
 
-            return Task.FromResult(new ProxyResponse
+            return new ProxyResponse
             {
                 StatusCode = (int)response.StatusCode,
                 Headers = ProviderHttpUtilities.CreateJsonHeaders(request.Stream ? ProxyConstants.ContentTypes.EventStreamUtf8 : ProxyConstants.ContentTypes.Json),
                 Body = translatedBody
-            });
+            };
         }
 
         var anthropicBody = request.Stream
             ? _messageTranslator.ToAnthropicStream(chatCompletionsStream, request.Model)
-            : _messageTranslator.ToAnthropicResponse(ConvertResponseToChatCompletion(ExtractCompletedResponse(body), request.Model), request.Model);
+            : _messageTranslator.ToAnthropicResponse(ConvertResponseToChatCompletion(ExtractCompletedResponse(bufferedBody), request.Model), request.Model);
 
-        return Task.FromResult(new ProxyResponse
+        return new ProxyResponse
         {
             StatusCode = (int)response.StatusCode,
             Headers = ProviderHttpUtilities.CreateJsonHeaders(request.Stream ? ProxyConstants.ContentTypes.EventStreamUtf8 : ProxyConstants.ContentTypes.Json),
             Body = anthropicBody
-        });
+        };
     }
 
     /// <summary>
@@ -292,173 +302,41 @@ public sealed partial class ChatGptAdapter : IProviderAdapter
         var input = Encoding.UTF8.GetString(body);
         var lines = input.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
         var output = new StringBuilder();
-        var emittedRole = false;
-        var sawToolCall = false;
-        var responseId = $"chatcmpl-{Guid.NewGuid():N}";
-        var model = requestModel;
-        var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        var toolCallsById = new Dictionary<string, ToolCallState>(StringComparer.Ordinal);
+        var state = new ChatCompletionStreamState(requestModel);
 
         foreach (var line in lines)
         {
-            if (!line.StartsWith("data:", StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            var payload = line[5..].Trim();
-            if (string.IsNullOrWhiteSpace(payload))
-            {
-                continue;
-            }
-
-            using var document = JsonDocument.Parse(payload);
-            var root = document.RootElement;
-            if (!root.TryGetProperty("type", out var typeElement))
-            {
-                continue;
-            }
-
-            var eventType = typeElement.GetString();
-            if (string.IsNullOrWhiteSpace(eventType))
-            {
-                continue;
-            }
-
-            if (eventType == "response.created")
-            {
-                var response = root.TryGetProperty("response", out var responseElement) ? responseElement : root;
-                if (response.TryGetProperty("id", out var idElement))
-                {
-                    responseId = idElement.GetString() ?? responseId;
-                }
-
-                if (response.TryGetProperty("model", out var modelElement))
-                {
-                    model = modelElement.GetString() ?? model;
-                }
-
-                if (response.TryGetProperty("created_at", out var createdElement) && createdElement.ValueKind == JsonValueKind.Number)
-                {
-                    created = createdElement.GetInt64();
-                }
-
-                AppendChunk(output, responseId, created, model, new Dictionary<string, object?>
-                {
-                    ["role"] = "assistant"
-                }, null, ref emittedRole);
-                continue;
-            }
-
-            if (eventType == "response.output_item.added")
-            {
-                if (!TryGetFunctionCallItem(root))
-                {
-                    continue;
-                }
-
-                var toolCall = UpsertToolCallFromItem(root, toolCallsById);
-                if (toolCall is null)
-                {
-                    continue;
-                }
-
-                sawToolCall = true;
-                AppendChunk(output, responseId, created, model, CreateToolCallDelta(toolCall, string.Empty), null, ref emittedRole);
-                continue;
-            }
-
-            if (eventType == "response.output_text.delta")
-            {
-                if (root.TryGetProperty("delta", out var deltaElement))
-                {
-                    var contentDelta = deltaElement.GetString() ?? string.Empty;
-                    if (!string.IsNullOrEmpty(contentDelta))
-                    {
-                        AppendChunk(output, responseId, created, model, new Dictionary<string, object?>
-                        {
-                            ["content"] = contentDelta
-                        }, null, ref emittedRole);
-                    }
-                }
-
-                continue;
-            }
-
-            if (eventType == "response.reasoning_summary_text.delta")
-            {
-                if (!root.TryGetProperty("delta", out var reasoningDeltaElement))
-                {
-                    continue;
-                }
-
-                var reasoningDelta = reasoningDeltaElement.GetString() ?? string.Empty;
-                if (string.IsNullOrEmpty(reasoningDelta))
-                {
-                    continue;
-                }
-
-                AppendChunk(output, responseId, created, model, new Dictionary<string, object?>
-                {
-                    ["reasoning_content"] = reasoningDelta
-                }, null, ref emittedRole);
-                continue;
-            }
-
-            if (eventType == "response.reasoning_summary_text.done"
-                || eventType == "response.reasoning_summary_part.added"
-                || eventType == "response.reasoning_summary_part.done"
-                || eventType == "response.reasoning_summary.done")
-            {
-                continue;
-            }
-
-            if (eventType == "response.output_item.done")
-            {
-                if (TryGetReasoningSummaryText(root, out var reasoningText))
-                {
-                    AppendChunk(output, responseId, created, model, new Dictionary<string, object?>
-                    {
-                        ["reasoning_content"] = reasoningText
-                    }, null, ref emittedRole);
-                }
-
-                continue;
-            }
-
-            if (eventType == "response.content_part.added"
-                || eventType == "response.output_text.done"
-                || eventType == "response.content_part.done"
-                || eventType == "response.function_call_arguments.done"
-                || eventType == "response.function_call_output")
-            {
-                continue;
-            }
-
-            if (eventType == "response.function_call_arguments.delta")
-            {
-                var toolCall = ResolveToolCallForArgumentsDelta(root, toolCallsById);
-                if (toolCall is null)
-                {
-                    continue;
-                }
-
-                sawToolCall = true;
-                var argumentDelta = root.TryGetProperty("delta", out var functionArgumentsDeltaElement)
-                    ? functionArgumentsDeltaElement.GetString() ?? string.Empty
-                    : string.Empty;
-                AppendChunk(output, responseId, created, model, CreateToolCallDelta(toolCall, argumentDelta), null, ref emittedRole);
-                continue;
-            }
-
-            if (eventType == "response.completed")
-            {
-                AppendChunk(output, responseId, created, model, new Dictionary<string, object?>(), sawToolCall ? "tool_calls" : "stop", ref emittedRole);
-                output.Append("data: [DONE]\n\n");
-            }
+            AppendTranslatedEventLine(output, line, state);
         }
 
         return Encoding.UTF8.GetBytes(output.ToString());
+    }
+
+    private static async Task WriteOpenAiStreamAsync(HttpResponseMessage response, Stream output, string requestModel, CancellationToken cancellationToken)
+    {
+        await using var upstreamStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var reader = new StreamReader(upstreamStream, Encoding.UTF8);
+        using var writer = new StreamWriter(output, new UTF8Encoding(false), leaveOpen: true);
+        var state = new ChatCompletionStreamState(requestModel);
+
+        try
+        {
+            while (await reader.ReadLineAsync(cancellationToken) is { } line)
+            {
+                var translated = TranslateResponseEventLine(line, state);
+                if (string.IsNullOrEmpty(translated))
+                {
+                    continue;
+                }
+
+                await writer.WriteAsync(translated.AsMemory(), cancellationToken);
+                await writer.FlushAsync(cancellationToken);
+            }
+        }
+        finally
+        {
+            response.Dispose();
+        }
     }
 
     private static byte[] ExtractCompletedResponse(byte[] streamBody)
@@ -493,6 +371,193 @@ public sealed partial class ChatGptAdapter : IProviderAdapter
     }
 
     private sealed record ToolCallState(string Id, int Index, string Name);
+
+    private sealed class ChatCompletionStreamState
+    {
+        public ChatCompletionStreamState(string requestModel)
+        {
+            Model = requestModel;
+        }
+
+        public bool EmittedRole { get; set; }
+
+        public bool SawToolCall { get; set; }
+
+        public string ResponseId { get; set; } = $"chatcmpl-{Guid.NewGuid():N}";
+
+        public string Model { get; set; }
+
+        public long Created { get; set; } = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        public IDictionary<string, ToolCallState> ToolCallsById { get; } = new Dictionary<string, ToolCallState>(StringComparer.Ordinal);
+    }
+
+    private static void AppendTranslatedEventLine(StringBuilder output, string line, ChatCompletionStreamState state)
+    {
+        var translated = TranslateResponseEventLine(line, state);
+        if (!string.IsNullOrEmpty(translated))
+        {
+            output.Append(translated);
+        }
+    }
+
+    private static string TranslateResponseEventLine(string line, ChatCompletionStreamState state)
+    {
+        if (!line.StartsWith("data:", StringComparison.Ordinal))
+        {
+            return string.Empty;
+        }
+
+        var payload = line[5..].Trim();
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            return string.Empty;
+        }
+
+        using var document = JsonDocument.Parse(payload);
+        var root = document.RootElement;
+        if (!root.TryGetProperty("type", out var typeElement))
+        {
+            return string.Empty;
+        }
+
+        var eventType = typeElement.GetString();
+        if (string.IsNullOrWhiteSpace(eventType))
+        {
+            return string.Empty;
+        }
+
+        var output = new StringBuilder();
+        if (eventType == "response.created")
+        {
+            var response = root.TryGetProperty("response", out var responseElement) ? responseElement : root;
+            if (response.TryGetProperty("id", out var idElement))
+            {
+                state.ResponseId = idElement.GetString() ?? state.ResponseId;
+            }
+
+            if (response.TryGetProperty("model", out var modelElement))
+            {
+                state.Model = modelElement.GetString() ?? state.Model;
+            }
+
+            if (response.TryGetProperty("created_at", out var createdElement) && createdElement.ValueKind == JsonValueKind.Number)
+            {
+                state.Created = createdElement.GetInt64();
+            }
+
+            AppendChunk(output, state, new Dictionary<string, object?>
+            {
+                ["role"] = "assistant"
+            }, null);
+            return output.ToString();
+        }
+
+        if (eventType == "response.output_item.added")
+        {
+            if (!TryGetFunctionCallItem(root))
+            {
+                return string.Empty;
+            }
+
+            var toolCall = UpsertToolCallFromItem(root, state.ToolCallsById);
+            if (toolCall is null)
+            {
+                return string.Empty;
+            }
+
+            state.SawToolCall = true;
+            AppendChunk(output, state, CreateToolCallDelta(toolCall, string.Empty), null);
+            return output.ToString();
+        }
+
+        if (eventType == "response.output_text.delta")
+        {
+            if (root.TryGetProperty("delta", out var deltaElement))
+            {
+                var contentDelta = deltaElement.GetString() ?? string.Empty;
+                if (!string.IsNullOrEmpty(contentDelta))
+                {
+                    AppendChunk(output, state, new Dictionary<string, object?>
+                    {
+                        ["content"] = contentDelta
+                    }, null);
+                }
+            }
+
+            return output.ToString();
+        }
+
+        if (eventType == "response.reasoning_summary_text.delta")
+        {
+            if (!root.TryGetProperty("delta", out var reasoningDeltaElement))
+            {
+                return string.Empty;
+            }
+
+            var reasoningDelta = reasoningDeltaElement.GetString() ?? string.Empty;
+            if (string.IsNullOrEmpty(reasoningDelta))
+            {
+                return string.Empty;
+            }
+
+            AppendChunk(output, state, new Dictionary<string, object?>
+            {
+                ["reasoning_content"] = reasoningDelta
+            }, null);
+            return output.ToString();
+        }
+
+        if (eventType == "response.reasoning_summary_text.done"
+            || eventType == "response.reasoning_summary_part.added"
+            || eventType == "response.reasoning_summary_part.done"
+            || eventType == "response.reasoning_summary.done"
+            || eventType == "response.content_part.added"
+            || eventType == "response.output_text.done"
+            || eventType == "response.content_part.done"
+            || eventType == "response.function_call_arguments.done"
+            || eventType == "response.function_call_output")
+        {
+            return string.Empty;
+        }
+
+        if (eventType == "response.output_item.done")
+        {
+            if (TryGetReasoningSummaryText(root, out var reasoningText))
+            {
+                AppendChunk(output, state, new Dictionary<string, object?>
+                {
+                    ["reasoning_content"] = reasoningText
+                }, null);
+            }
+
+            return output.ToString();
+        }
+
+        if (eventType == "response.function_call_arguments.delta")
+        {
+            var toolCall = ResolveToolCallForArgumentsDelta(root, state.ToolCallsById);
+            if (toolCall is null)
+            {
+                return string.Empty;
+            }
+
+            state.SawToolCall = true;
+            var argumentDelta = root.TryGetProperty("delta", out var functionArgumentsDeltaElement)
+                ? functionArgumentsDeltaElement.GetString() ?? string.Empty
+                : string.Empty;
+            AppendChunk(output, state, CreateToolCallDelta(toolCall, argumentDelta), null);
+            return output.ToString();
+        }
+
+        if (eventType == "response.completed")
+        {
+            AppendChunk(output, state, new Dictionary<string, object?>(), state.SawToolCall ? "tool_calls" : "stop");
+            output.Append("data: [DONE]\n\n");
+        }
+
+        return output.ToString();
+    }
 
     private static Dictionary<string, object?> CreateToolCallDelta(ToolCallState toolCall, string arguments)
     {
@@ -920,6 +985,13 @@ public sealed partial class ChatGptAdapter : IProviderAdapter
         return !string.IsNullOrWhiteSpace(reasoningText);
     }
 
+
+    private static void AppendChunk(StringBuilder output, ChatCompletionStreamState state, Dictionary<string, object?> delta, string? finishReason)
+    {
+        var emittedRole = state.EmittedRole;
+        AppendChunk(output, state.ResponseId, state.Created, state.Model, delta, finishReason, ref emittedRole);
+        state.EmittedRole = emittedRole;
+    }
 
     private static void AppendChunk(StringBuilder output, string id, long created, string model, Dictionary<string, object?> delta, string? finishReason, ref bool emittedRole)
     {

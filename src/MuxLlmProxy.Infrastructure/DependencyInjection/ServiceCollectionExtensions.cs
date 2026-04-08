@@ -33,8 +33,6 @@ public static class ServiceCollectionExtensions
     {
         var options = configuration.GetSection("ProxySettings").Get<ProxyOptions>() ?? new ProxyOptions();
 
-        var effectiveTimeout = options.GetNormalizedTimeoutSeconds();
-
         services.Configure<ProxyOptions>(configuration.GetSection("ProxySettings"));
         services.AddSingleton<IFileRepository, FileRepository>();
         services.AddSingleton<IProxyConfigurationProvider, ProxyConfigurationProvider>();
@@ -61,7 +59,7 @@ public static class ServiceCollectionExtensions
 
         services.AddHttpClient("upstream", client =>
         {
-            client.Timeout = TimeSpan.FromSeconds(effectiveTimeout);
+            client.Timeout = Timeout.InfiniteTimeSpan;
         });
 
         return services;

@@ -32,13 +32,6 @@ public static class Program
             options.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(effectiveTimeout);
         });
 
-        builder.Services.AddRequestTimeouts(timeoutOptions =>
-        {
-            timeoutOptions.DefaultPolicy = new Microsoft.AspNetCore.Http.Timeouts.RequestTimeoutPolicy
-            {
-                Timeout = TimeSpan.FromSeconds(effectiveTimeout)
-            };
-        });
         builder.Services.AddHttpContextAccessor();
 
         var dataDirectory = ProxyPathResolver.ResolveDataDirectory(builder.Environment.ContentRootPath);
@@ -70,7 +63,6 @@ public static class Program
 
         var app = builder.Build();
 
-        app.UseRequestTimeouts();
         app.UseMiddleware<ProxyLoggingMiddleware>();
         app.MapProxyEndpoints();
         await app.RunAsync();

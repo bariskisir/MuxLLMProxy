@@ -69,37 +69,58 @@ public sealed class OpenAiCompatibleAdapter : IProviderAdapter
     /// <param name="body">The buffered upstream response body.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The translated proxy response.</returns>
-    public Task<ProxyResponse> TranslateResponseAsync(ProxyTarget target, ProxyRequest request, HttpResponseMessage response, byte[] body, CancellationToken cancellationToken)
+    public async Task<ProxyResponse> TranslateResponseAsync(ProxyTarget target, ProxyRequest request, HttpResponseMessage response, byte[]? body, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(response);
-        ArgumentNullException.ThrowIfNull(body);
 
         if (!response.IsSuccessStatusCode)
         {
             var contentType = response.Content.Headers.ContentType?.ToString() ?? ProxyConstants.ContentTypes.Json;
-            return Task.FromResult(new ProxyResponse
+            return new ProxyResponse
             {
                 StatusCode = (int)response.StatusCode,
                 Headers = ProviderHttpUtilities.CreateJsonHeaders(contentType),
-                Body = body
-            });
+                Body = body ?? await response.Content.ReadAsByteArrayAsync(cancellationToken)
+            };
         }
 
         var isAnthropicRequest = request.Format == ProxyFormat.Anthropic;
+        if (request.Stream && !isAnthropicRequest)
+        {
+            return new ProxyResponse
+            {
+                StatusCode = (int)response.StatusCode,
+                Headers = ProviderHttpUtilities.CreateJsonHeaders(ProxyConstants.ContentTypes.EventStreamUtf8),
+                WriteBodyAsync = async (output, ct) =>
+                {
+                    await using var upstreamStream = await response.Content.ReadAsStreamAsync(ct);
+                    try
+                    {
+                        await upstreamStream.CopyToAsync(output, ct);
+                    }
+                    finally
+                    {
+                        response.Dispose();
+                    }
+                }
+            };
+        }
+
+        var bufferedBody = body ?? await response.Content.ReadAsByteArrayAsync(cancellationToken);
         var translatedBody = isAnthropicRequest
             ? request.Stream
-                ? _messageTranslator.ToAnthropicStream(body, request.Model)
-                : _messageTranslator.ToAnthropicResponse(body, request.Model)
-            : body;
+                ? _messageTranslator.ToAnthropicStream(bufferedBody, request.Model)
+                : _messageTranslator.ToAnthropicResponse(bufferedBody, request.Model)
+            : bufferedBody;
 
-        return Task.FromResult(new ProxyResponse
+        return new ProxyResponse
         {
             StatusCode = (int)response.StatusCode,
             Headers = ProviderHttpUtilities.CreateJsonHeaders(request.Stream ? ProxyConstants.ContentTypes.EventStreamUtf8 : ProxyConstants.ContentTypes.Json),
             Body = translatedBody
-        });
+        };
     }
 
     /// <summary>

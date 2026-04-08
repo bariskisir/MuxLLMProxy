@@ -77,38 +77,72 @@ public sealed class ProxyOrchestrator : IProxyOrchestrator
                 using var upstreamRequest = await adapter.PrepareRequestAsync(target, request, cancellationToken);
                 await LogUpstreamRequestAsync(target, upstreamRequest, cancellationToken);
 
-                using var upstreamResponse = await client.SendAsync(upstreamRequest, cancellationToken);
-                var body = await upstreamResponse.Content.ReadAsByteArrayAsync(cancellationToken);
-                LogUpstreamResponse(target, upstreamResponse, body);
+                var completionOption = request.Stream
+                    ? HttpCompletionOption.ResponseHeadersRead
+                    : HttpCompletionOption.ResponseContentRead;
+                var upstreamResponse = await client.SendAsync(upstreamRequest, completionOption, cancellationToken);
+                byte[]? body = null;
+                var transferResponseOwnership = request.Stream && upstreamResponse.IsSuccessStatusCode;
 
-                if (upstreamResponse.StatusCode == HttpStatusCode.TooManyRequests)
+                try
                 {
-                    if (!target.ProviderType.TracksAvailabilityWindows)
+                    if (!transferResponseOwnership || upstreamResponse.StatusCode == HttpStatusCode.TooManyRequests)
                     {
-                        return await adapter.TranslateResponseAsync(target, request, upstreamResponse, body, cancellationToken);
+                        body = await upstreamResponse.Content.ReadAsByteArrayAsync(cancellationToken);
+                        LogUpstreamResponse(target, upstreamResponse, body);
+                    }
+                    else
+                    {
+                        LogUpstreamResponseHeaders(target, upstreamResponse);
                     }
 
-                    var retryAt = ResolveRetryAt(upstreamResponse, body);
-                    exhaustedRetryAt ??= retryAt?.ToUnixTimeSeconds();
-                    if (retryAt is not null)
+                    if (upstreamResponse.StatusCode == HttpStatusCode.TooManyRequests)
                     {
-                        await _accountStore.MarkRateLimitedAsync(target.Account.Id, retryAt.Value, cancellationToken);
+                        if (!target.ProviderType.TracksAvailabilityWindows)
+                        {
+                            var translatedRateLimitResponse = await adapter.TranslateResponseAsync(target, request, upstreamResponse, body, cancellationToken);
+                            if (translatedRateLimitResponse.WriteBodyAsync is null)
+                            {
+                                upstreamResponse.Dispose();
+                            }
+
+                            return translatedRateLimitResponse;
+                        }
+
+                        var retryAt = ResolveRetryAt(upstreamResponse, body ?? []);
+                        exhaustedRetryAt ??= retryAt?.ToUnixTimeSeconds();
+                        if (retryAt is not null)
+                        {
+                            await _accountStore.MarkRateLimitedAsync(target.Account.Id, retryAt.Value, cancellationToken);
+                        }
+
+                        upstreamResponse.Dispose();
+                        continue;
                     }
 
-                    continue;
-                }
+                    if (target.ProviderType.TracksAvailabilityWindows)
+                    {
+                        await _accountStore.ClearRateLimitAsync(target.Account.Id, cancellationToken);
+                    }
+                    if (target.ProviderType.SupportsMulti)
+                    {
+                        var rotationKey = $"{request.Model}:{target.ProviderType.Id}";
+                        _roundRobinState.Advance(rotationKey, targets.Count(targetItem => string.Equals(targetItem.ProviderType.Id, target.ProviderType.Id, StringComparison.OrdinalIgnoreCase)), index);
+                    }
 
-                if (target.ProviderType.TracksAvailabilityWindows)
-                {
-                    await _accountStore.ClearRateLimitAsync(target.Account.Id, cancellationToken);
-                }
-                if (target.ProviderType.SupportsMulti)
-                {
-                    var rotationKey = $"{request.Model}:{target.ProviderType.Id}";
-                    _roundRobinState.Advance(rotationKey, targets.Count(targetItem => string.Equals(targetItem.ProviderType.Id, target.ProviderType.Id, StringComparison.OrdinalIgnoreCase)), index);
-                }
+                    var translatedResponse = await adapter.TranslateResponseAsync(target, request, upstreamResponse, body, cancellationToken);
+                    if (translatedResponse.WriteBodyAsync is null)
+                    {
+                        upstreamResponse.Dispose();
+                    }
 
-                return await adapter.TranslateResponseAsync(target, request, upstreamResponse, body, cancellationToken);
+                    return translatedResponse;
+                }
+                catch
+                {
+                    upstreamResponse.Dispose();
+                    throw;
+                }
             }
             catch (Exception exception) when (exception is HttpRequestException || exception is TaskCanceledException)
             {
@@ -181,6 +215,23 @@ public sealed class ProxyOrchestrator : IProxyOrchestrator
                 Headers = HttpLoggingSanitizer.SanitizeHeaders(response.Headers.Select(header => new KeyValuePair<string, string>(header.Key, string.Join(",", header.Value)))),
                 ContentHeaders = HttpLoggingSanitizer.SanitizeHeaders(response.Content.Headers.Select(header => new KeyValuePair<string, string>(header.Key, string.Join(",", header.Value)))),
                 Body = HttpLoggingSanitizer.SanitizeBody(Encoding.UTF8.GetString(body))
+            });
+    }
+
+    /// <summary>
+    /// Logs upstream response metadata for streamed responses without buffering the body.
+    /// </summary>
+    private void LogUpstreamResponseHeaders(ProxyTarget target, HttpResponseMessage response)
+    {
+        _logger.LogInformation(
+            "Upstream response headers {@UpstreamResponse}",
+            new
+            {
+                Provider = target.ProviderType.Id,
+                AccountId = target.Account.Id,
+                StatusCode = (int)response.StatusCode,
+                Headers = HttpLoggingSanitizer.SanitizeHeaders(response.Headers.Select(header => new KeyValuePair<string, string>(header.Key, string.Join(",", header.Value)))),
+                ContentHeaders = HttpLoggingSanitizer.SanitizeHeaders(response.Content.Headers.Select(header => new KeyValuePair<string, string>(header.Key, string.Join(",", header.Value))))
             });
     }
 

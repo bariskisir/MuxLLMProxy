@@ -16,7 +16,12 @@ public sealed record ProxyResponse
     public required IReadOnlyDictionary<string, string> Headers { get; init; }
 
     /// <summary>
-    /// Gets the response body bytes.
+    /// Gets the buffered response body bytes.
     /// </summary>
-    public required byte[] Body { get; init; }
+    public byte[]? Body { get; init; }
+
+    /// <summary>
+    /// Gets an optional streaming response body writer.
+    /// </summary>
+    public Func<Stream, CancellationToken, Task>? WriteBodyAsync { get; init; }
 }
