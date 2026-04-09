@@ -13,5 +13,10 @@ public enum ProxyFormat
     /// <summary>
     /// Anthropic messages compatible format.
     /// </summary>
-    Anthropic = 1
+    Anthropic = 1,
+
+    /// <summary>
+    /// OpenAI responses compatible format.
+    /// </summary>
+    OpenAiResponses = 2
 }

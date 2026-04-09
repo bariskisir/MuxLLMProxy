@@ -33,14 +33,15 @@ public sealed class RoundRobinState : IRoundRobinState
     /// </summary>
     /// <param name="key">The routing key.</param>
     /// <param name="count">The candidate count.</param>
-    /// <param name="usedIndex">The index that succeeded.</param>
-    public void Advance(string key, int count, int usedIndex)
+    /// <param name="currentOffset">The offset used to rotate the candidate list.</param>
+    /// <param name="usedIndex">The provider-local index that succeeded inside the rotated list.</param>
+    public void Advance(string key, int count, int currentOffset, int usedIndex)
     {
         if (count <= 0)
         {
             return;
         }
 
-        _offsets[key] = (usedIndex + 1) % count;
+        _offsets[key] = (Math.Abs(currentOffset % count) + usedIndex + 1) % count;
     }
 }

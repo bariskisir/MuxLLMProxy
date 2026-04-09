@@ -30,7 +30,7 @@ public static class HttpLoggingSanitizer
     }
 
     /// <summary>
-    /// Truncates log bodies to a safe size for structured logging.
+    /// Returns log bodies with sensitive values already redacted elsewhere.
     /// </summary>
     /// <param name="body">The body text to sanitize.</param>
     /// <returns>The sanitized body text.</returns>
@@ -41,8 +41,6 @@ public static class HttpLoggingSanitizer
             return string.Empty;
         }
 
-        return body.Length <= ProxyConstants.Defaults.LogBodyCharacterLimit
-            ? body
-            : $"{body[..ProxyConstants.Defaults.LogBodyCharacterLimit]}...(truncated)";
+        return body;
     }
 }

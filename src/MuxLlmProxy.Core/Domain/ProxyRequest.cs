@@ -24,4 +24,9 @@ public sealed record ProxyRequest
     /// Gets the original request body bytes.
     /// </summary>
     public required byte[] Body { get; init; }
+
+    /// <summary>
+    /// Gets the optional client session identifier.
+    /// </summary>
+    public string? SessionId { get; init; }
 }

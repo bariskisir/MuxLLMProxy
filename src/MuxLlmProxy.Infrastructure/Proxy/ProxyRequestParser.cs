@@ -22,6 +22,18 @@ public sealed class ProxyRequestParser : IProxyRequestParser
     public Task<ProxyRequest> ParseAsync(byte[] body, ProxyFormat? formatHint, CancellationToken cancellationToken)
     {
         var prefersAnthropic = formatHint == ProxyFormat.Anthropic;
+        var prefersResponses = formatHint == ProxyFormat.OpenAiResponses;
+
+        if (prefersResponses && TryParseOpenAiResponses(body, out var responsesModel, out var responsesStream))
+        {
+            return Task.FromResult(new ProxyRequest
+            {
+                Model = responsesModel,
+                Stream = responsesStream,
+                Format = ProxyFormat.OpenAiResponses,
+                Body = body
+            });
+        }
 
         if (!prefersAnthropic && TryParseOpenAi(body, out var openAiRequest))
         {
@@ -67,6 +79,49 @@ public sealed class ProxyRequestParser : IProxyRequestParser
         catch (JsonException)
         {
             request = null!;
+            return false;
+        }
+    }
+
+    private static bool TryParseOpenAiResponses(byte[] body, out string model, out bool stream)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            var root = document.RootElement;
+            if (!root.TryGetProperty("model", out var modelElement) || modelElement.ValueKind != JsonValueKind.String)
+            {
+                model = string.Empty;
+                stream = false;
+                return false;
+            }
+
+            var hasInput = root.TryGetProperty("input", out _);
+            var hasInstructions = root.TryGetProperty("instructions", out _);
+            var hasReasoning = root.TryGetProperty("reasoning", out _);
+            if (!hasInput && !hasInstructions && !hasReasoning)
+            {
+                model = string.Empty;
+                stream = false;
+                return false;
+            }
+
+            model = modelElement.GetString() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(model))
+            {
+                stream = false;
+                return false;
+            }
+
+            stream = root.TryGetProperty("stream", out var streamElement)
+                && streamElement.ValueKind is JsonValueKind.True or JsonValueKind.False
+                && streamElement.GetBoolean();
+            return true;
+        }
+        catch (JsonException)
+        {
+            model = string.Empty;
+            stream = false;
             return false;
         }
     }

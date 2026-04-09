@@ -25,6 +25,11 @@ public static class ProxyEndpoints
             var models = await modelsQueryService.GetModelsAsync(cancellationToken);
             return Results.Ok(new ModelsResponse(models));
         });
+        app.MapGet(ProxyConstants.Routes.OpenAiModels, async (IModelsQueryService modelsQueryService, CancellationToken cancellationToken) =>
+        {
+            var models = await modelsQueryService.GetModelsAsync(cancellationToken);
+            return Results.Ok(new ModelsResponse(models));
+        });
 
         app.MapGet(ProxyConstants.Routes.Limits, async (HttpContext context, IProxyConfigurationProvider configurationProvider, ILimitsQueryService limitsQueryService, CancellationToken cancellationToken) =>
         {
@@ -40,6 +45,8 @@ public static class ProxyEndpoints
 
         app.MapPost(ProxyConstants.Routes.Messages, HandleProxyRequestAsync);
         app.MapPost(ProxyConstants.Routes.ChatCompletions, HandleProxyRequestAsync);
+        app.MapPost(ProxyConstants.Routes.OpenAiChatCompletions, HandleProxyRequestAsync);
+        app.MapPost(ProxyConstants.Routes.Responses, HandleProxyRequestAsync);
     }
 
     /// <summary>
@@ -71,9 +78,21 @@ public static class ProxyEndpoints
             ProxyFormat? formatHint = context.Request.Path.Equals(ProxyConstants.Routes.Messages, StringComparison.OrdinalIgnoreCase)
                 ? ProxyFormat.Anthropic
                 : context.Request.Path.Equals(ProxyConstants.Routes.ChatCompletions, StringComparison.OrdinalIgnoreCase)
+                    || context.Request.Path.Equals(ProxyConstants.Routes.OpenAiChatCompletions, StringComparison.OrdinalIgnoreCase)
                     ? ProxyFormat.OpenAi
+                    : context.Request.Path.Equals(ProxyConstants.Routes.Responses, StringComparison.OrdinalIgnoreCase)
+                        ? ProxyFormat.OpenAiResponses
                     : null;
             var request = await parser.ParseAsync(memoryStream.ToArray(), formatHint, cancellationToken);
+            var sessionId = context.Request.Headers.TryGetValue(ProxyConstants.Headers.ClaudeCodeSessionId, out var sessionHeader)
+                ? sessionHeader.ToString()
+                : context.Request.Headers.TryGetValue(ProxyConstants.Headers.SessionAffinity, out var affinityHeader)
+                    ? affinityHeader.ToString()
+                    : null;
+            request = request with
+            {
+                SessionId = string.IsNullOrWhiteSpace(sessionId) ? null : sessionId
+            };
             var response = await orchestrator.ExecuteAsync(request, cancellationToken);
             await context.WriteProxyResponseAsync(response);
         }

@@ -64,16 +64,11 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
             Temperature = request.Temperature,
             TopP = request.TopP,
             Stream = request.Stream,
-            Tools = request.Tools?.Select(tool => new OpenAiTool
-            {
-                Type = "function",
-                Function = new OpenAiFunctionDefinition
-                {
-                    Name = tool.Name,
-                    Description = tool.Description,
-                    Parameters = tool.InputSchema
-                }
-            }).ToArray(),
+            Tools = request.Tools?
+                .Select(tool => CreateOpenAiTool(tool))
+                .Where(tool => tool is not null)
+                .Cast<OpenAiTool>()
+                .ToArray(),
             ToolChoice = request.ToolChoice,
             ReasoningSummary = request.Thinking is null ? null : "detailed",
             ReasoningEffort = MapReasoningEffort(request.Thinking),
@@ -95,10 +90,6 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         var content = message.TryGetProperty("content", out var contentElement)
             ? contentElement.GetString() ?? string.Empty
             : string.Empty;
-        var reasoningContent = message.TryGetProperty("reasoning_content", out var reasoningContentElement)
-            ? reasoningContentElement.GetString() ?? string.Empty
-            : string.Empty;
-
         var toolUseBlocks = ExtractToolUseBlocks(message);
         var finishReason = choice.TryGetProperty("finish_reason", out var finishReasonElement)
             ? MapStopReason(finishReasonElement.GetString())
@@ -118,11 +109,6 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
             : 0;
 
         var blocks = new List<object>();
-        if (!string.IsNullOrWhiteSpace(reasoningContent))
-        {
-            blocks.Add(new { type = "thinking", thinking = reasoningContent, signature = string.Empty });
-        }
-
         if (!string.IsNullOrEmpty(content))
         {
             blocks.Add(new { type = "text", text = content });
@@ -154,12 +140,12 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
     /// </summary>
     public byte[] ToAnthropicStream(byte[] openAiStreamBytes, string model)
     {
+        var messageId = TryExtractResponseIdFromStream(openAiStreamBytes) ?? $"msg_{Guid.NewGuid():N}";
         var builder = new StringBuilder();
         builder.AppendLine("event: message_start");
-        builder.AppendLine($"data: {{\"type\":\"message_start\",\"message\":{{\"id\":\"msg_proxy\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"{model}\",\"content\":[]}}}}");
+        builder.AppendLine($"data: {{\"type\":\"message_start\",\"message\":{{\"id\":{JsonSerializer.Serialize(messageId)},\"type\":\"message\",\"role\":\"assistant\",\"model\":\"{model}\",\"content\":[]}}}}");
         builder.AppendLine();
 
-        var startedThinkingBlock = false;
         var startedTextBlock = false;
         var startedToolBlock = false;
         var toolBlockIndex = 2;
@@ -188,25 +174,6 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
 
             var choice = choicesElement[0];
             var delta = choice.TryGetProperty("delta", out var deltaElement) ? deltaElement : default;
-            if (delta.ValueKind == JsonValueKind.Object && delta.TryGetProperty("reasoning_content", out var reasoningElement))
-            {
-                var thinking = reasoningElement.GetString();
-                if (!string.IsNullOrEmpty(thinking))
-                {
-                    if (!startedThinkingBlock)
-                    {
-                        builder.AppendLine("event: content_block_start");
-                        builder.AppendLine("data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}}");
-                        builder.AppendLine();
-                        startedThinkingBlock = true;
-                    }
-
-                    builder.AppendLine("event: content_block_delta");
-                    builder.AppendLine($"data: {{\"type\":\"content_block_delta\",\"index\":0,\"delta\":{{\"type\":\"thinking_delta\",\"thinking\":{JsonSerializer.Serialize(thinking)}}}}}");
-                    builder.AppendLine();
-                }
-            }
-
             if (delta.ValueKind == JsonValueKind.Object && delta.TryGetProperty("content", out var textElement))
             {
                 var text = textElement.GetString();
@@ -263,13 +230,6 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
             }
         }
 
-        if (startedThinkingBlock)
-        {
-            builder.AppendLine("event: content_block_stop");
-            builder.AppendLine("data: {\"type\":\"content_block_stop\",\"index\":0}");
-            builder.AppendLine();
-        }
-
         if (startedTextBlock)
         {
             builder.AppendLine("event: content_block_stop");
@@ -292,6 +252,76 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         builder.AppendLine();
 
         return Encoding.UTF8.GetBytes(builder.ToString());
+    }
+
+    private static string? TryExtractResponseIdFromStream(byte[] openAiStreamBytes)
+    {
+        foreach (var rawLine in Encoding.UTF8.GetString(openAiStreamBytes).Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = rawLine.Trim();
+            if (!line.StartsWith("data:", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var payload = line[5..].Trim();
+            if (string.IsNullOrWhiteSpace(payload) || string.Equals(payload, "[DONE]", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            try
+            {
+                using var document = JsonDocument.Parse(payload);
+                var root = document.RootElement;
+                if (!root.TryGetProperty("type", out var typeElement)
+                    || !string.Equals(typeElement.GetString(), "response.created", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var response = root.TryGetProperty("response", out var responseElement) ? responseElement : root;
+                if (response.TryGetProperty("id", out var idElement) && idElement.ValueKind == JsonValueKind.String)
+                {
+                    return idElement.GetString();
+                }
+            }
+            catch (JsonException)
+            {
+            }
+        }
+
+        return null;
+    }
+
+    private static OpenAiTool? CreateOpenAiTool(AnthropicTool tool)
+    {
+        var name = tool.Name;
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            name = tool.Function?.Name;
+        }
+
+        if (string.IsNullOrWhiteSpace(name) && !string.Equals(tool.Type, "function", StringComparison.OrdinalIgnoreCase))
+        {
+            name = tool.Type;
+        }
+
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return null;
+        }
+
+        return new OpenAiTool
+        {
+            Type = "function",
+            Function = new OpenAiFunctionDefinition
+            {
+                Name = name,
+                Description = tool.Description ?? tool.Function?.Description,
+                Parameters = tool.InputSchema ?? tool.Function?.Parameters
+            }
+        };
     }
 
     private static List<object> ExtractToolUseBlocks(JsonElement message)
@@ -410,6 +440,16 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
                             });
                         }
 
+                        var userText = ExtractUserTextContent(element);
+                        if (!string.IsNullOrWhiteSpace(userText))
+                        {
+                            translated.Add(new OpenAiMessage
+                            {
+                                Role = "user",
+                                Content = userText
+                            });
+                        }
+
                         continue;
                     }
                 }
@@ -432,6 +472,50 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         return translated;
     }
 
+    private static string ExtractUserTextContent(JsonElement contentElement)
+    {
+        if (contentElement.ValueKind == JsonValueKind.String)
+        {
+            return contentElement.GetString() ?? string.Empty;
+        }
+
+        if (contentElement.ValueKind != JsonValueKind.Array)
+        {
+            return contentElement.ToString();
+        }
+
+        var parts = new List<string>();
+        foreach (var item in contentElement.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object)
+            {
+                parts.Add(item.ToString());
+                continue;
+            }
+
+            if (item.TryGetProperty("type", out var typeElement)
+                && string.Equals(typeElement.GetString(), "tool_result", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (item.TryGetProperty("text", out var textElement))
+            {
+                var text = PromptTextSanitizer.Sanitize(textElement.GetString() ?? string.Empty);
+                if (!string.IsNullOrWhiteSpace(text))
+                {
+                    parts.Add(text);
+                }
+
+                continue;
+            }
+
+            parts.Add(item.ToString());
+        }
+
+        return PromptTextSanitizer.Sanitize(string.Join("\n", parts));
+    }
+
     private static bool TryTranslateAssistantToolUseMessage(JsonElement contentElement, out OpenAiMessage message)
     {
         message = null!;
@@ -452,7 +536,11 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
             var type = typeElement.GetString();
             if (string.Equals(type, "text", StringComparison.Ordinal) && item.TryGetProperty("text", out var textElement))
             {
-                textParts.Add(textElement.GetString() ?? string.Empty);
+                var text = PromptTextSanitizer.Sanitize(textElement.GetString() ?? string.Empty).Trim();
+                if (!ShouldDropAssistantPlanningText(text))
+                {
+                    textParts.Add(text);
+                }
                 continue;
             }
 
@@ -515,7 +603,7 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
     {
         if (element.ValueKind == JsonValueKind.String)
         {
-            return element.GetString() ?? string.Empty;
+            return PromptTextSanitizer.Sanitize(element.GetString() ?? string.Empty);
         }
 
         if (element.ValueKind != JsonValueKind.Array)
@@ -526,13 +614,42 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         var parts = new List<string>();
         foreach (var item in element.EnumerateArray())
         {
-            if (item.ValueKind == JsonValueKind.Object && item.TryGetProperty("text", out var textProperty))
-            {
-                parts.Add(textProperty.GetString() ?? string.Empty);
+                if (item.ValueKind == JsonValueKind.Object && item.TryGetProperty("text", out var textProperty))
+                {
+                    var text = PromptTextSanitizer.Sanitize(textProperty.GetString() ?? string.Empty);
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        parts.Add(text);
+                    }
+                }
             }
+
+        return PromptTextSanitizer.Sanitize(string.Join("\n", parts));
+    }
+
+    private static bool ShouldDropAssistantPlanningText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return true;
         }
 
-        return string.Join("\n", parts);
+        if (PromptTextSanitizer.ContainsClientHarness(text))
+        {
+            return true;
+        }
+
+        return text.StartsWith("Thinking:", StringComparison.OrdinalIgnoreCase)
+            || text.StartsWith("# Todos", StringComparison.Ordinal)
+            || text.StartsWith("Preparing for", StringComparison.OrdinalIgnoreCase)
+            || text.StartsWith("Deciding on", StringComparison.OrdinalIgnoreCase)
+            || text.StartsWith("I need to", StringComparison.OrdinalIgnoreCase)
+            || text.StartsWith("I’m ", StringComparison.OrdinalIgnoreCase)
+            || text.StartsWith("I'm ", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("todowrite", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("TaskCreate", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("AskUserQuestion", StringComparison.OrdinalIgnoreCase)
+            || text.Contains("Plan mode", StringComparison.OrdinalIgnoreCase);
     }
 
     private static string DecodeJsonStringOrRaw(JsonElement element)

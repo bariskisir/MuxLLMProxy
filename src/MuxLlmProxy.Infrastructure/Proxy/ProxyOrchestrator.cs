@@ -127,7 +127,14 @@ public sealed class ProxyOrchestrator : IProxyOrchestrator
                     if (target.ProviderType.SupportsMulti)
                     {
                         var rotationKey = $"{request.Model}:{target.ProviderType.Id}";
-                        _roundRobinState.Advance(rotationKey, targets.Count(targetItem => string.Equals(targetItem.ProviderType.Id, target.ProviderType.Id, StringComparison.OrdinalIgnoreCase)), index);
+                        var providerTargets = targets
+                            .Where(targetItem => string.Equals(targetItem.ProviderType.Id, target.ProviderType.Id, StringComparison.OrdinalIgnoreCase))
+                            .ToArray();
+                        var currentOffset = _roundRobinState.GetOffset(rotationKey, providerTargets.Length);
+                        var providerLocalIndex = providerTargets
+                            .TakeWhile(targetItem => !string.Equals(targetItem.Account.Id, target.Account.Id, StringComparison.OrdinalIgnoreCase))
+                            .Count();
+                        _roundRobinState.Advance(rotationKey, providerTargets.Length, currentOffset, providerLocalIndex);
                     }
 
                     var translatedResponse = await adapter.TranslateResponseAsync(target, request, upstreamResponse, body, cancellationToken);

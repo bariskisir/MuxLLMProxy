@@ -1,12 +1,14 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
 using MuxLlmProxy.Core.Abstractions;
 using MuxLlmProxy.Core.Configuration;
 using MuxLlmProxy.Core.Contracts;
 using MuxLlmProxy.Core.Domain;
 using MuxLlmProxy.Core.Utilities;
 using MuxLlmProxy.Infrastructure.Providers;
+using MuxLlmProxy.Infrastructure.Translation;
 
 namespace MuxLlmProxy.Infrastructure.Providers.ChatGpt;
 
@@ -16,18 +18,32 @@ namespace MuxLlmProxy.Infrastructure.Providers.ChatGpt;
 public sealed partial class ChatGptAdapter : IProviderAdapter
 {
     private readonly IMessageTranslator _messageTranslator;
+    private readonly ChatGptAuthService _authService;
+    private readonly ChatGptRequestTransformer _requestTransformer;
     private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ILogger<ChatGptAdapter> _logger;
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ChatGptAdapter"/> class.
     /// </summary>
     /// <param name="messageTranslator">The message translator dependency.</param>
+    /// <param name="authService">The ChatGPT authentication service.</param>
+    /// <param name="requestTransformer">The ChatGPT request transformer.</param>
     /// <param name="httpClientFactory">The HTTP client factory dependency.</param>
-    public ChatGptAdapter(IMessageTranslator messageTranslator, IHttpClientFactory httpClientFactory)
+    /// <param name="logger">The logger dependency.</param>
+    public ChatGptAdapter(
+        IMessageTranslator messageTranslator,
+        ChatGptAuthService authService,
+        ChatGptRequestTransformer requestTransformer,
+        IHttpClientFactory httpClientFactory,
+        ILogger<ChatGptAdapter> logger)
     {
         _messageTranslator = messageTranslator;
+        _authService = authService;
+        _requestTransformer = requestTransformer;
         _httpClientFactory = httpClientFactory;
+        _logger = logger;
     }
 
     /// <summary>
@@ -42,32 +58,38 @@ public sealed partial class ChatGptAdapter : IProviderAdapter
     /// <param name="request">The normalized proxy request.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The upstream HTTP request.</returns>
-    public Task<HttpRequestMessage> PrepareRequestAsync(ProxyTarget target, ProxyRequest request, CancellationToken cancellationToken)
+    public async Task<HttpRequestMessage> PrepareRequestAsync(ProxyTarget target, ProxyRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(target);
         ArgumentNullException.ThrowIfNull(request);
 
+        var payload = await _requestTransformer.TransformAsync(request, cancellationToken);
+        LogToolRequestPayload(request, payload);
         var message = new HttpRequestMessage(HttpMethod.Post, $"{target.ProviderType.BaseUrl.TrimEnd('/')}/backend-api/codex/responses")
         {
-            Content = new ByteArrayContent(BuildChatGptRequestBody(request))
+            Content = new ByteArrayContent(payload)
         };
 
         message.Content.Headers.ContentType = new MediaTypeHeaderValue(ProxyConstants.ContentTypes.Json);
-        message.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(request.Stream ? ProxyConstants.ContentTypes.EventStream : ProxyConstants.ContentTypes.Json));
+        message.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(ProxyConstants.ContentTypes.EventStream));
+        message.Headers.TryAddWithoutValidation(ProxyConstants.Headers.OpenAiBeta, ProxyConstants.ProviderHeaders.OpenAiBetaResponses);
+        message.Headers.TryAddWithoutValidation(ProxyConstants.Headers.Originator, ProxyConstants.ProviderHeaders.CodexOriginator);
 
-        var accountId = ExtractChatGptAccountId(target.Account.Access);
+        var accessContext = await _authService.GetAccessContextAsync(target.Account, cancellationToken);
+        var accountId = accessContext.AccountId;
         if (!string.IsNullOrWhiteSpace(accountId))
         {
             message.Headers.TryAddWithoutValidation(ProxyConstants.Headers.ChatGptAccountId, accountId);
         }
 
-        if (string.IsNullOrWhiteSpace(target.Account.Access))
+        if (!string.IsNullOrWhiteSpace(request.SessionId))
         {
-            throw new InvalidOperationException($"ChatGPT account '{target.Account.Id}' is missing its access token.");
+            message.Headers.TryAddWithoutValidation(ProxyConstants.Headers.SessionId, request.SessionId);
+            message.Headers.TryAddWithoutValidation(ProxyConstants.Headers.ConversationId, request.SessionId);
         }
 
-        message.Headers.Authorization = new AuthenticationHeaderValue(ProxyConstants.Responses.BearerScheme, target.Account.Access);
-        return Task.FromResult(message);
+        message.Headers.Authorization = new AuthenticationHeaderValue(ProxyConstants.Responses.BearerScheme, accessContext.AccessToken);
+        return message;
     }
 
     /// <summary>
@@ -87,22 +109,44 @@ public sealed partial class ChatGptAdapter : IProviderAdapter
 
         if (!response.IsSuccessStatusCode)
         {
-            var contentType = response.Content.Headers.ContentType?.ToString() ?? ProxyConstants.ContentTypes.Json;
+            var mappedResponse = await MapRateLimitResponseAsync(response, cancellationToken);
+            var contentType = mappedResponse.Content.Headers.ContentType?.ToString() ?? ProxyConstants.ContentTypes.Json;
             return new ProxyResponse
             {
-                StatusCode = (int)response.StatusCode,
+                StatusCode = (int)mappedResponse.StatusCode,
                 Headers = ProviderHttpUtilities.CreateJsonHeaders(contentType),
-                Body = body ?? await response.Content.ReadAsByteArrayAsync(cancellationToken)
+                Body = body ?? await mappedResponse.Content.ReadAsByteArrayAsync(cancellationToken)
             };
         }
 
         if (request.Stream && request.Format == ProxyFormat.OpenAi)
         {
+                return new ProxyResponse
+                {
+                    StatusCode = (int)response.StatusCode,
+                    Headers = ProviderHttpUtilities.CreateJsonHeaders(ProxyConstants.ContentTypes.EventStreamUtf8),
+                    WriteBodyAsync = (output, ct) => WriteOpenAiStreamAsync(response, output, request.Model, ct)
+                };
+            }
+
+        if (request.Format == ProxyFormat.OpenAiResponses)
+        {
+            if (request.Stream)
+            {
+                return new ProxyResponse
+                {
+                    StatusCode = (int)response.StatusCode,
+                    Headers = ProviderHttpUtilities.CreateJsonHeaders(ProxyConstants.ContentTypes.EventStreamUtf8),
+                    WriteBodyAsync = (output, ct) => WriteResponsesStreamAsync(response, output, ct)
+                };
+            }
+
+            var responsesBody = ExtractCompletedResponse(body ?? await response.Content.ReadAsByteArrayAsync(cancellationToken));
             return new ProxyResponse
             {
                 StatusCode = (int)response.StatusCode,
-                Headers = ProviderHttpUtilities.CreateJsonHeaders(ProxyConstants.ContentTypes.EventStreamUtf8),
-                WriteBodyAsync = (output, ct) => WriteOpenAiStreamAsync(response, output, request.Model, ct)
+                Headers = ProviderHttpUtilities.CreateJsonHeaders(ProxyConstants.ContentTypes.Json),
+                Body = responsesBody
             };
         }
 
@@ -145,17 +189,14 @@ public sealed partial class ChatGptAdapter : IProviderAdapter
     {
         ArgumentNullException.ThrowIfNull(target);
 
-        if (string.IsNullOrWhiteSpace(target.Account.Access))
-        {
-            return ProviderHttpUtilities.CreateWeeklyLimitSnapshot(target.Account.AvailableAtWeeklyLimit);
-        }
+        var accessContext = await _authService.GetAccessContextAsync(target.Account, cancellationToken);
 
         using var request = new HttpRequestMessage(HttpMethod.Get, $"{target.ProviderType.BaseUrl.TrimEnd('/')}/backend-api/wham/usage");
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(ProxyConstants.ContentTypes.Json));
         request.Headers.TryAddWithoutValidation(ProxyConstants.Headers.Originator, ProxyConstants.ProviderHeaders.CodexOriginator);
-        request.Headers.Authorization = new AuthenticationHeaderValue(ProxyConstants.Responses.BearerScheme, target.Account.Access);
+        request.Headers.Authorization = new AuthenticationHeaderValue(ProxyConstants.Responses.BearerScheme, accessContext.AccessToken);
 
-        var accountId = ExtractChatGptAccountId(target.Account.Access);
+        var accountId = accessContext.AccountId;
         if (!string.IsNullOrWhiteSpace(accountId))
         {
             request.Headers.TryAddWithoutValidation(ProxyConstants.Headers.ChatGptAccountId, accountId);
@@ -173,90 +214,8 @@ public sealed partial class ChatGptAdapter : IProviderAdapter
     }
 
     /// <summary>
-    /// Builds the ChatGPT backend-api request payload.
+    /// Converts a backend-api response payload into an OpenAI chat completion payload.
     /// </summary>
-    /// <param name="request">The normalized proxy request.</param>
-    /// <returns>The backend-api request payload.</returns>
-    private byte[] BuildChatGptRequestBody(ProxyRequest request)
-    {
-        var openAiRequest = JsonSerializer.Deserialize<OpenAiChatRequest>(_messageTranslator.ToOpenAiRequest(request.Body), SerializerOptions)
-            ?? throw new InvalidOperationException("The request payload could not be translated to an OpenAI-compatible format.");
-
-        var instructions = string.Join(
-            "\n\n",
-            openAiRequest.Messages
-                .Where(message => string.Equals(message.Role, "system", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(message.Role, "developer", StringComparison.OrdinalIgnoreCase))
-                .Select(message => FlattenMessageContent(message.Content))
-                .Where(value => !string.IsNullOrWhiteSpace(value)));
-
-        var input = openAiRequest.Messages
-            .Where(message => !string.Equals(message.Role, "system", StringComparison.OrdinalIgnoreCase)
-                && !string.Equals(message.Role, "developer", StringComparison.OrdinalIgnoreCase))
-            .SelectMany(MapMessageToChatGptInput)
-            .ToArray();
-
-        var payload = new Dictionary<string, object?>
-        {
-            ["model"] = openAiRequest.Model,
-            ["input"] = input,
-            ["stream"] = true,
-            ["store"] = false
-        };
-
-        payload["instructions"] = string.IsNullOrWhiteSpace(instructions)
-            ? ProxyConstants.Responses.DefaultInstructions
-            : instructions;
-
-        if (openAiRequest.TopP is not null)
-        {
-            payload["top_p"] = openAiRequest.TopP;
-        }
-
-        if (openAiRequest.Tools is not null)
-        {
-            payload["tools"] = openAiRequest.Tools.Select(tool => new Dictionary<string, object?>
-            {
-                ["type"] = tool.Type,
-                ["name"] = tool.Function.Name,
-                ["description"] = tool.Function.Description,
-                ["parameters"] = tool.Function.Parameters
-            }).ToArray();
-            payload["parallel_tool_calls"] = false;
-        }
-
-        if (openAiRequest.ToolChoice is not null)
-        {
-            payload["tool_choice"] = NormalizeToolChoice(openAiRequest.ToolChoice);
-        }
-
-        if (!string.IsNullOrWhiteSpace(openAiRequest.Verbosity))
-        {
-            payload["text"] = new Dictionary<string, object?>
-            {
-                ["verbosity"] = openAiRequest.Verbosity
-            };
-        }
-
-        if (!string.IsNullOrWhiteSpace(openAiRequest.ReasoningSummary))
-        {
-            payload["reasoning"] = new Dictionary<string, object?>
-            {
-                ["effort"] = openAiRequest.ReasoningEffort,
-                ["summary"] = openAiRequest.ReasoningSummary
-            };
-        }
-        else if (!string.IsNullOrWhiteSpace(openAiRequest.ReasoningEffort))
-        {
-            payload["reasoning"] = new Dictionary<string, object?>
-            {
-                ["effort"] = openAiRequest.ReasoningEffort
-            };
-        }
-
-        return JsonSerializer.SerializeToUtf8Bytes(payload, SerializerOptions);
-    }
-
     private static byte[] ConvertResponseToChatCompletion(byte[] body, string requestModel)
     {
         using var document = JsonDocument.Parse(body);
@@ -330,6 +289,26 @@ public sealed partial class ChatGptAdapter : IProviderAdapter
                 }
 
                 await writer.WriteAsync(translated.AsMemory(), cancellationToken);
+                await writer.FlushAsync(cancellationToken);
+            }
+        }
+        finally
+        {
+            response.Dispose();
+        }
+    }
+
+    private static async Task WriteResponsesStreamAsync(HttpResponseMessage response, Stream output, CancellationToken cancellationToken)
+    {
+        await using var upstreamStream = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var reader = new StreamReader(upstreamStream, Encoding.UTF8);
+        using var writer = new StreamWriter(output, new UTF8Encoding(false), leaveOpen: true);
+
+        try
+        {
+            while (await reader.ReadLineAsync(cancellationToken) is { } line)
+            {
+                await writer.WriteLineAsync(line.AsMemory(), cancellationToken);
                 await writer.FlushAsync(cancellationToken);
             }
         }
@@ -670,7 +649,7 @@ public sealed partial class ChatGptAdapter : IProviderAdapter
             && string.Equals(typeElement.GetString(), "function_call", StringComparison.Ordinal);
     }
 
-    private static IEnumerable<Dictionary<string, object?>> MapMessageToChatGptInput(OpenAiMessage message)
+    internal static IEnumerable<Dictionary<string, object?>> MapMessageToChatGptInput(OpenAiMessage message)
     {
         if (string.Equals(message.Role, "assistant", StringComparison.OrdinalIgnoreCase)
             && TryGetToolCalls(message, out var toolCalls))
@@ -688,14 +667,26 @@ public sealed partial class ChatGptAdapter : IProviderAdapter
             var toolCallId = message.ToolCallId ?? ExtractToolCallId(message.Content);
             if (string.IsNullOrWhiteSpace(toolCallId))
             {
-                throw new InvalidOperationException("Tool result messages must include a tool_call_id.");
+                yield return new Dictionary<string, object?>
+                {
+                    ["role"] = "assistant",
+                    ["content"] = new[]
+                    {
+                        new Dictionary<string, object?>
+                        {
+                            ["type"] = "output_text",
+                            ["text"] = OpenAiRequestNormalizer.FlattenMessageContent(message.Content)
+                        }
+                    }
+                };
+                yield break;
             }
 
             yield return new Dictionary<string, object?>
             {
                 ["type"] = "function_call_output",
                 ["call_id"] = toolCallId,
-                ["output"] = FlattenMessageContent(message.Content)
+                ["output"] = OpenAiRequestNormalizer.FlattenMessageContent(message.Content)
             };
             yield break;
         }
@@ -708,7 +699,7 @@ public sealed partial class ChatGptAdapter : IProviderAdapter
                 new Dictionary<string, object?>
                 {
                     ["type"] = string.Equals(message.Role, "assistant", StringComparison.OrdinalIgnoreCase) ? "output_text" : "input_text",
-                    ["text"] = FlattenMessageContent(message.Content)
+                    ["text"] = OpenAiRequestNormalizer.FlattenMessageContent(message.Content)
                 }
             }
         };
@@ -806,7 +797,7 @@ public sealed partial class ChatGptAdapter : IProviderAdapter
         return null;
     }
 
-    private static object NormalizeToolChoice(object toolChoice)
+    internal static object NormalizeToolChoice(object toolChoice)
     {
         if (toolChoice is not JsonElement element || element.ValueKind != JsonValueKind.Object)
         {
@@ -1030,54 +1021,6 @@ public sealed partial class ChatGptAdapter : IProviderAdapter
         output.Append("\n\n");
     }
 
-    private static string FlattenMessageContent(object? content)
-    {
-        if (content is null)
-        {
-            return string.Empty;
-        }
-
-        if (content is string text)
-        {
-            return text;
-        }
-
-        if (content is JsonElement element)
-        {
-            return FlattenJsonElement(element);
-        }
-
-        return JsonSerializer.Serialize(content, SerializerOptions);
-    }
-
-    private static string FlattenJsonElement(JsonElement element)
-    {
-        if (element.ValueKind == JsonValueKind.String)
-        {
-            return element.GetString() ?? string.Empty;
-        }
-
-        if (element.ValueKind == JsonValueKind.Array)
-        {
-            var parts = new List<string>();
-            foreach (var item in element.EnumerateArray())
-            {
-                if (item.ValueKind == JsonValueKind.Object && item.TryGetProperty("text", out var textElement))
-                {
-                    parts.Add(textElement.GetString() ?? string.Empty);
-                }
-            }
-
-            return string.Join("\n", parts);
-        }
-
-        if (element.ValueKind == JsonValueKind.Object && element.TryGetProperty("content", out var nestedContent))
-        {
-            return FlattenJsonElement(nestedContent);
-        }
-
-        return element.ToString();
-    }
 
     private static ProviderLimitSnapshot? ParseBestLimitSnapshot(byte[] body)
     {
@@ -1193,8 +1136,123 @@ public sealed partial class ChatGptAdapter : IProviderAdapter
         return null;
     }
 
-    private static string? ExtractChatGptAccountId(string? accessToken)
+    private static async Task<HttpResponseMessage> MapRateLimitResponseAsync(HttpResponseMessage response, CancellationToken cancellationToken)
     {
-        return JwtUtilities.TryReadStringClaim(accessToken, "https://api.openai.com/auth", "chatgpt_account_id");
+        if (response.StatusCode != System.Net.HttpStatusCode.NotFound)
+        {
+            return response;
+        }
+
+        var body = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+        var bodyText = Encoding.UTF8.GetString(body);
+        if (string.IsNullOrWhiteSpace(bodyText))
+        {
+            return response;
+        }
+
+        string code = string.Empty;
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            if (document.RootElement.TryGetProperty("error", out var errorElement))
+            {
+                if (errorElement.TryGetProperty("code", out var codeElement))
+                {
+                    code = codeElement.GetString() ?? string.Empty;
+                }
+                else if (errorElement.TryGetProperty("type", out var typeElement))
+                {
+                    code = typeElement.GetString() ?? string.Empty;
+                }
+            }
+        }
+        catch (JsonException)
+        {
+        }
+
+        var haystack = $"{code} {bodyText}";
+        if (haystack.IndexOf("usage_limit_reached", StringComparison.OrdinalIgnoreCase) < 0
+            && haystack.IndexOf("usage_not_included", StringComparison.OrdinalIgnoreCase) < 0
+            && haystack.IndexOf("rate_limit_exceeded", StringComparison.OrdinalIgnoreCase) < 0
+            && haystack.IndexOf("usage limit", StringComparison.OrdinalIgnoreCase) < 0)
+        {
+            return response;
+        }
+
+        var mapped = new HttpResponseMessage(System.Net.HttpStatusCode.TooManyRequests)
+        {
+            ReasonPhrase = "Too Many Requests",
+            Content = new ByteArrayContent(body)
+        };
+
+        foreach (var header in response.Headers)
+        {
+            mapped.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+
+        foreach (var header in response.Content.Headers)
+        {
+            mapped.Content.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+
+        response.Dispose();
+        return mapped;
     }
+
+    private void LogToolRequestPayload(ProxyRequest request, byte[] payload)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(payload);
+            var root = document.RootElement;
+
+            var hasTools = root.TryGetProperty("tools", out var toolsElement) && toolsElement.ValueKind == JsonValueKind.Array && toolsElement.GetArrayLength() > 0;
+            var hasToolOutputs = PayloadContainsToolOutputs(root);
+            if (!hasTools && !hasToolOutputs)
+            {
+                return;
+            }
+
+            _logger.LogInformation(
+                "Tool request payload {@ToolRequest}",
+                new
+                {
+                    request.SessionId,
+                    Format = request.Format.ToString(),
+                    request.Model,
+                    ToolChoice = root.TryGetProperty("tool_choice", out var toolChoiceElement) ? toolChoiceElement.GetRawText() : null,
+                    Tools = hasTools ? toolsElement.GetRawText() : null,
+                    Input = root.TryGetProperty("input", out var inputElement) ? inputElement.GetRawText() : null
+                });
+        }
+        catch (JsonException exception)
+        {
+            _logger.LogWarning(exception, "Failed to inspect tool request payload for session {SessionId}", request.SessionId);
+        }
+    }
+
+    private static bool PayloadContainsToolOutputs(JsonElement root)
+    {
+        if (!root.TryGetProperty("input", out var inputElement) || inputElement.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        foreach (var item in inputElement.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object || !item.TryGetProperty("type", out var typeElement))
+            {
+                continue;
+            }
+
+            var type = typeElement.GetString();
+            if (type is "function_call" or "function_call_output" or "local_shell_call" or "local_shell_call_output" or "custom_tool_call" or "custom_tool_call_output")
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
 }

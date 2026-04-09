@@ -93,7 +93,12 @@ public sealed class ProviderCatalog : IProviderCatalog
                 .ToDictionary(
                     group => group.Key,
                     group => (IReadOnlyList<ProviderModel>)group
-                        .Select(entry => new ProviderModel(entry.Id, entry.Name))
+                        .Select(entry => new ProviderModel(
+                            entry.Id,
+                            entry.Name,
+                            entry.Aliases ?? Array.Empty<string>(),
+                            entry.SupportsXHigh,
+                            entry.SupportsNone))
                         .ToArray(),
                     StringComparer.OrdinalIgnoreCase);
 
@@ -122,5 +127,11 @@ public sealed class ProviderCatalog : IProviderCatalog
         public required string Id { get; init; }
 
         public required string Name { get; init; }
+
+        public IReadOnlyList<string>? Aliases { get; init; }
+
+        public bool SupportsXHigh { get; init; }
+
+        public bool SupportsNone { get; init; }
     }
 }

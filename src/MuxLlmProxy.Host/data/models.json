@@ -17,37 +17,111 @@
   {
     "providerId": "chatgpt",
     "id": "gpt-5.4",
-    "name": "GPT-5.4"
+    "name": "GPT-5.4",
+    "aliases": [],
+    "supportsXHigh": true,
+    "supportsNone": true
   },
   {
     "providerId": "chatgpt",
     "id": "gpt-5.4-mini",
-    "name": "GPT-5.4 Mini"
+    "name": "GPT-5.4 Mini",
+    "aliases": [],
+    "supportsXHigh": true,
+    "supportsNone": true
   },
   {
     "providerId": "chatgpt",
     "id": "gpt-5.3-codex",
-    "name": "GPT-5.3 Codex"
+    "name": "GPT-5.3 Codex",
+    "aliases": [],
+    "supportsXHigh": false,
+    "supportsNone": false
   },
   {
     "providerId": "chatgpt",
     "id": "gpt-5.2-codex",
-    "name": "GPT-5.2 Codex"
+    "name": "GPT-5.2 Codex",
+    "aliases": [
+      "gpt-5.2-codex-low",
+      "gpt-5.2-codex-medium",
+      "gpt-5.2-codex-high",
+      "gpt-5.2-codex-xhigh"
+    ],
+    "supportsXHigh": true,
+    "supportsNone": false
   },
   {
     "providerId": "chatgpt",
     "id": "gpt-5.2",
-    "name": "GPT-5.2"
+    "name": "GPT-5.2",
+    "aliases": [
+      "gpt-5.2-none",
+      "gpt-5.2-low",
+      "gpt-5.2-medium",
+      "gpt-5.2-high",
+      "gpt-5.2-xhigh"
+    ],
+    "supportsXHigh": true,
+    "supportsNone": true
   },
   {
     "providerId": "chatgpt",
     "id": "gpt-5.1-codex-max",
-    "name": "GPT-5.1 Codex Max"
+    "name": "GPT-5.1 Codex Max",
+    "aliases": [
+      "gpt-5.1-codex-max-low",
+      "gpt-5.1-codex-max-medium",
+      "gpt-5.1-codex-max-high",
+      "gpt-5.1-codex-max-xhigh"
+    ],
+    "supportsXHigh": true,
+    "supportsNone": false
   },
   {
     "providerId": "chatgpt",
     "id": "gpt-5.1-codex-mini",
-    "name": "GPT-5.1 Codex Mini"
+    "name": "GPT-5.1 Codex Mini",
+    "aliases": [
+      "codex-mini-latest",
+      "gpt-5-codex-mini",
+      "gpt-5-codex-mini-medium",
+      "gpt-5-codex-mini-high",
+      "gpt-5.1-codex-mini-medium",
+      "gpt-5.1-codex-mini-high"
+    ],
+    "supportsXHigh": false,
+    "supportsNone": false
+  },
+  {
+    "providerId": "chatgpt",
+    "id": "gpt-5.1",
+    "name": "GPT-5.1",
+    "aliases": [
+      "gpt-5",
+      "gpt-5-mini",
+      "gpt-5-nano",
+      "gpt-5.1-none",
+      "gpt-5.1-low",
+      "gpt-5.1-medium",
+      "gpt-5.1-high",
+      "gpt-5.1-chat-latest"
+    ],
+    "supportsXHigh": false,
+    "supportsNone": true
+  },
+  {
+    "providerId": "chatgpt",
+    "id": "gpt-5.1-codex",
+    "name": "GPT-5.1 Codex",
+    "aliases": [
+      "gpt-5-codex",
+      "gpt-5.1-codex-low",
+      "gpt-5.1-codex-medium",
+      "gpt-5.1-codex-high"
+    ],
+    "supportsXHigh": false,
+    "supportsNone": false
   },
   {
     "providerId": "opencode",

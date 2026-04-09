@@ -61,8 +61,13 @@ public static class ProxyConstants
         public const string RateLimitReset = "x-ratelimit-reset";
         public const string RateLimitResetRequests = "x-ratelimit-reset-requests";
         public const string ChatGptAccountId = "chatgpt-account-id";
+        public const string OpenAiBeta = "OpenAI-Beta";
         public const string Originator = "originator";
+        public const string SessionId = "session_id";
+        public const string ConversationId = "conversation_id";
         public const string OpenCodeSession = "x-opencode-session";
+        public const string ClaudeCodeSessionId = "x-claude-code-session-id";
+        public const string SessionAffinity = "x-session-affinity";
     }
 
     /// <summary>
@@ -81,6 +86,7 @@ public static class ProxyConstants
     public static class ProviderHeaders
     {
         public const string CodexOriginator = "codex_cli_rs";
+        public const string OpenAiBetaResponses = "responses=experimental";
         public const string OpenCodeSessionValue = "1";
     }
 
@@ -106,9 +112,12 @@ public static class ProxyConstants
     {
         public const string Health = "/healthz";
         public const string Models = "/api/v1/models";
+        public const string OpenAiModels = "/v1/models";
         public const string Limits = "/api/v1/limits";
         public const string Messages = "/api/v1/messages";
         public const string ChatCompletions = "/api/v1/chat/completions";
+        public const string OpenAiChatCompletions = "/v1/chat/completions";
+        public const string Responses = "/v1/responses";
     }
 
     /// <summary>

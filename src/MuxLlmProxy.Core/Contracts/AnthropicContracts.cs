@@ -93,7 +93,17 @@ public sealed record AnthropicTool
     /// <summary>
     /// Gets the tool name.
     /// </summary>
-    public required string Name { get; init; }
+    public string? Name { get; init; }
+
+    /// <summary>
+    /// Gets the optional Anthropic tool type identifier.
+    /// </summary>
+    public string? Type { get; init; }
+
+    /// <summary>
+    /// Gets the optional nested function descriptor when the tool is sent in OpenAI format.
+    /// </summary>
+    public AnthropicToolFunction? Function { get; init; }
 
     /// <summary>
     /// Gets the optional description.
@@ -105,4 +115,25 @@ public sealed record AnthropicTool
     /// </summary>
     [JsonPropertyName("input_schema")]
     public IDictionary<string, object?>? InputSchema { get; init; }
+}
+
+/// <summary>
+/// Represents a nested tool function descriptor.
+/// </summary>
+public sealed record AnthropicToolFunction
+{
+    /// <summary>
+    /// Gets the function name.
+    /// </summary>
+    public string? Name { get; init; }
+
+    /// <summary>
+    /// Gets the optional function description.
+    /// </summary>
+    public string? Description { get; init; }
+
+    /// <summary>
+    /// Gets the optional parameters schema.
+    /// </summary>
+    public IDictionary<string, object?>? Parameters { get; init; }
 }

@@ -48,7 +48,9 @@ public sealed class TargetSelector : ITargetSelector
                 continue;
             }
 
-            if (!providerType.Models.Any(model => string.Equals(model.Id, requestedModel, StringComparison.OrdinalIgnoreCase)))
+            if (!providerType.Models.Any(model =>
+                    string.Equals(model.Id, requestedModel, StringComparison.OrdinalIgnoreCase)
+                    || (model.Aliases?.Any(alias => string.Equals(alias, requestedModel, StringComparison.OrdinalIgnoreCase)) ?? false)))
             {
                 continue;
             }

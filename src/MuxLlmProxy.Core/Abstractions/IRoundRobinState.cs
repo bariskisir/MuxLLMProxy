@@ -18,6 +18,7 @@ public interface IRoundRobinState
     /// </summary>
     /// <param name="key">The logical routing key.</param>
     /// <param name="count">The candidate count.</param>
-    /// <param name="usedIndex">The index that succeeded.</param>
-    void Advance(string key, int count, int usedIndex);
+    /// <param name="currentOffset">The offset used to rotate the candidate list.</param>
+    /// <param name="usedIndex">The provider-local index that succeeded inside the rotated list.</param>
+    void Advance(string key, int count, int currentOffset, int usedIndex);
 }

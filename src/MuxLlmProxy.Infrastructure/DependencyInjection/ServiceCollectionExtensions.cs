@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using MuxLlmProxy.Core.Abstractions;
@@ -44,6 +45,9 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IRoundRobinState, RoundRobinState>();
         services.AddSingleton<IMessageTranslator, AnthropicMessageTranslator>();
         services.AddSingleton<IProxyRequestParser, ProxyRequestParser>();
+        services.AddSingleton<ChatGptAuthService>();
+        services.AddSingleton<ChatGptModelCatalog>();
+        services.AddSingleton<ChatGptRequestTransformer>();
         services.AddSingleton<IModelsQueryService, ModelsQueryService>();
         services.AddSingleton<ILimitsQueryService, LimitsQueryService>();
         services.AddSingleton<ITargetSelector, TargetSelector>();
@@ -57,9 +61,20 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IProviderAdapterResolver, ProviderAdapterResolver>();
         services.AddHostedService<WeeklyLimitSyncService>();
 
+        var effectiveTimeout = options.GetNormalizedTimeoutSeconds();
+
         services.AddHttpClient("upstream", client =>
         {
             client.Timeout = Timeout.InfiniteTimeSpan;
+        })
+        .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+        {
+            AutomaticDecompression = DecompressionMethods.All,
+            ConnectTimeout = TimeSpan.FromSeconds(Math.Min(effectiveTimeout, 15)),
+            PooledConnectionIdleTimeout = TimeSpan.FromSeconds(effectiveTimeout),
+            PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+            UseCookies = false,
+            UseProxy = false
         });
 
         return services;
