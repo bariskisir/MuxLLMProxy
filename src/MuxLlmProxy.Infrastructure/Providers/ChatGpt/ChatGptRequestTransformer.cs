@@ -137,7 +137,6 @@ public sealed class ChatGptRequestTransformer
             root["instructions"] = AppendDirective(root["instructions"]?.GetValue<string>(), planModeDirective);
 
             filteredInput = NormalizeOrphanedToolOutputs(filteredInput);
-            filteredInput = PruneTaskPlanningToolItems(filteredInput);
             filteredInput = PruneInputMessages(filteredInput);
             root["input"] = filteredInput;
         }
@@ -421,53 +420,7 @@ public sealed class ChatGptRequestTransformer
     private static JsonArray PruneMappedInput(IReadOnlyList<Dictionary<string, object?>> input)
     {
         var serialized = JsonSerializer.SerializeToNode(input, SerializerOptions) as JsonArray ?? [];
-        var pruned = PruneTaskPlanningToolItems(serialized);
-        return PruneInputMessages(pruned);
-    }
-
-    private static JsonArray PruneTaskPlanningToolItems(JsonArray input)
-    {
-        var suppressedCallIds = new HashSet<string>(StringComparer.Ordinal);
-        var result = new JsonArray();
-
-        foreach (var node in input)
-        {
-            if (node is not JsonObject item)
-            {
-                result.Add(node?.DeepClone());
-                continue;
-            }
-
-            var type = item["type"]?.GetValue<string>();
-            var callId = item["call_id"]?.GetValue<string>();
-
-            if (string.Equals(type, "function_call", StringComparison.OrdinalIgnoreCase))
-            {
-                var toolName = item["name"]?.GetValue<string>();
-                if (IsPlanningToolName(toolName))
-                {
-                    if (!string.IsNullOrWhiteSpace(callId))
-                    {
-                        suppressedCallIds.Add(callId);
-                    }
-
-                    continue;
-                }
-            }
-
-            if (string.Equals(type, "function_call_output", StringComparison.OrdinalIgnoreCase))
-            {
-                if ((!string.IsNullOrWhiteSpace(callId) && suppressedCallIds.Contains(callId))
-                    || IsPlanningToolOutput(item["output"]))
-                {
-                    continue;
-                }
-            }
-
-            result.Add(item.DeepClone());
-        }
-
-        return result;
+        return PruneInputMessages(serialized);
     }
 
     private static IReadOnlyList<OpenAiMessage> DeduplicateConsecutiveAssistantMessages(IReadOnlyList<OpenAiMessage> messages)
