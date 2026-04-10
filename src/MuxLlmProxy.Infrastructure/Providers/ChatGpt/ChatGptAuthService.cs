@@ -7,18 +7,33 @@ using MuxLlmProxy.Core.Utilities;
 
 namespace MuxLlmProxy.Infrastructure.Providers.ChatGpt;
 
+/// <summary>
+/// Manages OAuth token lifecycle for ChatGPT provider accounts.
+/// </summary>
 public sealed class ChatGptAuthService
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IAccountStore _accountStore;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ChatGptAuthService"/> class.
+    /// </summary>
+    /// <param name="httpClientFactory">The HTTP client factory dependency.</param>
+    /// <param name="accountStore">The account store dependency.</param>
     public ChatGptAuthService(IHttpClientFactory httpClientFactory, IAccountStore accountStore)
     {
         _httpClientFactory = httpClientFactory;
         _accountStore = accountStore;
     }
 
+    /// <summary>
+    /// Returns a valid access token and the associated account identifier for the supplied account.
+    /// Refreshes the token transparently when it is expired or about to expire.
+    /// </summary>
+    /// <param name="account">The account to authenticate.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A tuple containing the access token and optional account identifier.</returns>
     public async Task<(string AccessToken, string? AccountId)> GetAccessContextAsync(Account account, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(account);
@@ -27,6 +42,12 @@ public sealed class ChatGptAuthService
         return (accessToken, ExtractChatGptAccountId(accessToken));
     }
 
+    /// <summary>
+    /// Ensures the access token is valid, refreshing it if necessary.
+    /// </summary>
+    /// <param name="account">The account to validate.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A valid access token string.</returns>
     private async Task<string> EnsureValidAccessTokenAsync(Account account, CancellationToken cancellationToken)
     {
         if (!string.IsNullOrWhiteSpace(account.Access) && !IsExpiring(account.Expire))
@@ -73,6 +94,11 @@ public sealed class ChatGptAuthService
         return accessToken;
     }
 
+    /// <summary>
+    /// Determines whether the token is expired or will expire within the safety buffer window.
+    /// </summary>
+    /// <param name="expireUnixMilliseconds">The expiration timestamp in Unix milliseconds.</param>
+    /// <returns><see langword="true"/> if the token is expiring; otherwise <see langword="false"/>.</returns>
     private static bool IsExpiring(long? expireUnixMilliseconds)
     {
         if (expireUnixMilliseconds is null)
@@ -83,6 +109,11 @@ public sealed class ChatGptAuthService
         return expireUnixMilliseconds.Value <= DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeMilliseconds();
     }
 
+    /// <summary>
+    /// Extracts the specific ChatGPT account identifier from a JWT access token claim.
+    /// </summary>
+    /// <param name="accessToken">The JWT access token.</param>
+    /// <returns>The account identifier if found; otherwise <see langword="null"/>.</returns>
     private static string? ExtractChatGptAccountId(string? accessToken)
     {
         return JwtUtilities.TryReadStringClaim(accessToken, "https://api.openai.com/auth", "chatgpt_account_id");

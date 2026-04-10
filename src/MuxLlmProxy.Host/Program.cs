@@ -40,23 +40,21 @@ public static class Program
         var logsDirectory = Path.Combine(dataDirectory, ProxyConstants.Paths.LogsDirectoryName);
         Directory.CreateDirectory(logsDirectory);
 
-        builder.Host.UseSerilog((context, services, configuration) =>
-        {
-            configuration
-                .MinimumLevel.Warning()
-                .MinimumLevel.Override("Microsoft", LogEventLevel.Warning)
-                .Enrich.FromLogContext()
-                .WriteTo.File(
-                    Path.Combine(logsDirectory, ProxyConstants.Paths.ProxyLogFilePattern),
-                    rollingInterval: RollingInterval.Day,
-                    retainedFileCountLimit: ProxyConstants.Defaults.LogRetentionDays,
-                    shared: true);
+        var loggerConfiguration = new LoggerConfiguration()
+            .Enrich.FromLogContext()
+            .WriteTo.File(
+                Path.Combine(logsDirectory, ProxyConstants.Paths.ProxyLogFilePattern),
+                rollingInterval: RollingInterval.Day,
+                retainedFileCountLimit: ProxyConstants.Defaults.LogRetentionDays,
+                shared: true);
 
-            if (context.HostingEnvironment.IsDevelopment())
-            {
-                configuration.WriteTo.Console();
-            }
-        });
+        if (builder.Environment.IsDevelopment())
+        {
+            loggerConfiguration.WriteTo.Console();
+        }
+
+        builder.Logging.ClearProviders();
+        builder.Logging.AddSerilog(loggerConfiguration.CreateLogger());
 
         builder.Services.AddMuxLlmProxy(builder.Configuration, accountsPath, modelsPath);
         builder.WebHost.UseUrls($"http://*:{proxyOptions.Port}");

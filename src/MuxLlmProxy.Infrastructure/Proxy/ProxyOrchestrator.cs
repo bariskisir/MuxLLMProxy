@@ -187,6 +187,11 @@ public sealed class ProxyOrchestrator : IProxyOrchestrator
     /// <returns>A task that completes when logging preparation finishes.</returns>
     private async Task LogUpstreamRequestAsync(ProxyTarget target, HttpRequestMessage request, CancellationToken cancellationToken)
     {
+        if (!_logger.IsEnabled(LogLevel.Information))
+        {
+            return;
+        }
+
         var body = request.Content is null ? string.Empty : await request.Content.ReadAsStringAsync(cancellationToken);
         _logger.LogInformation(
             "Upstream request {@UpstreamRequest}",
@@ -249,12 +254,28 @@ public sealed class ProxyOrchestrator : IProxyOrchestrator
     /// <returns>The earliest known cooldown timestamp in Unix seconds, or <see langword="null"/>.</returns>
     private static long? GetEarliestCooldown(IEnumerable<ProxyTarget> targets)
     {
-        return targets
-            .Where(target => target.ProviderType.TracksAvailabilityWindows)
-            .SelectMany(target => new[] { target.Account.AvailableAtRateLimit, target.Account.AvailableAtWeeklyLimit })
-            .Where(value => value is not null && value > DateTimeOffset.UtcNow.ToUnixTimeSeconds())
-            .OrderBy(value => value)
-            .FirstOrDefault();
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        long? earliest = null;
+
+        foreach (var target in targets)
+        {
+            if (!target.ProviderType.TracksAvailabilityWindows)
+            {
+                continue;
+            }
+
+            if (target.Account.AvailableAtRateLimit is long rateLimit && rateLimit > now)
+            {
+                earliest = earliest is null ? rateLimit : Math.Min(earliest.Value, rateLimit);
+            }
+
+            if (target.Account.AvailableAtWeeklyLimit is long weeklyLimit && weeklyLimit > now)
+            {
+                earliest = earliest is null ? weeklyLimit : Math.Min(earliest.Value, weeklyLimit);
+            }
+        }
+
+        return earliest;
     }
 
     /// <summary>

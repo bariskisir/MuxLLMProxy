@@ -2,6 +2,10 @@ using System.Text.RegularExpressions;
 
 namespace MuxLlmProxy.Infrastructure.Translation;
 
+/// <summary>
+/// Sanitizes and filters prompt text by removing client harness markers, system reminders,
+/// and transient assistant planning content.
+/// </summary>
 internal static partial class PromptTextSanitizer
 {
     private static readonly string[] HarnessMarkers =
@@ -27,6 +31,11 @@ internal static partial class PromptTextSanitizer
         "# Session-specific guidance"
     ];
 
+    /// <summary>
+    /// Sanitizes the supplied text by stripping system reminder tags.
+    /// </summary>
+    /// <param name="text">The raw text to sanitize.</param>
+    /// <returns>The sanitized text.</returns>
     public static string Sanitize(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -37,6 +46,11 @@ internal static partial class PromptTextSanitizer
         return SystemReminderRegex().Replace(text, string.Empty).Trim();
     }
 
+    /// <summary>
+    /// Extracts the most recent line that looks like a user intent from sanitized text.
+    /// </summary>
+    /// <param name="text">The raw text to extract from.</param>
+    /// <returns>The most recent user intent line, or the full sanitized text.</returns>
     public static string ExtractLatestUserIntent(string text)
     {
         var sanitized = Sanitize(text);
@@ -56,6 +70,11 @@ internal static partial class PromptTextSanitizer
             : latestLine;
     }
 
+    /// <summary>
+    /// Sanitizes instruction text by removing client harness content entirely.
+    /// </summary>
+    /// <param name="text">The raw instruction text.</param>
+    /// <returns>The sanitized instruction text, or empty when harness content is detected.</returns>
     public static string SanitizeInstructions(string text)
     {
         var sanitized = Sanitize(text);
@@ -72,6 +91,11 @@ internal static partial class PromptTextSanitizer
         return sanitized;
     }
 
+    /// <summary>
+    /// Determines whether the supplied text contains known client harness markers.
+    /// </summary>
+    /// <param name="text">The text to inspect.</param>
+    /// <returns><see langword="true"/> when client harness content is detected; otherwise <see langword="false"/>.</returns>
     public static bool ContainsClientHarness(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -80,6 +104,39 @@ internal static partial class PromptTextSanitizer
         }
 
         return ClientHarnessMarkers.Any(marker => text.Contains(marker, StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Determines whether the supplied assistant text should be dropped as transient planning content.
+    /// This consolidates the filtering logic used by both the ChatGPT request transformer and
+    /// the Anthropic message translator.
+    /// </summary>
+    /// <param name="text">The assistant text to inspect.</param>
+    /// <returns><see langword="true"/> when the text should be dropped; otherwise <see langword="false"/>.</returns>
+    public static bool ShouldDropTransientText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return true;
+        }
+
+        if (ContainsClientHarness(text))
+        {
+            return true;
+        }
+
+        var normalized = text.Trim();
+        return normalized.StartsWith("Thinking:", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("# Todos", StringComparison.Ordinal)
+            || normalized.StartsWith("Preparing for", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("Deciding on", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("I need to", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("I'm ", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("I\u2019m ", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("Plan mode", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("TaskCreate", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("AskUserQuestion", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("todowrite", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsLikelyUserIntentLine(string line)

@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
 using MuxLlmProxy.Core.Abstractions;
 using MuxLlmProxy.Core.Contracts;
 using MuxLlmProxy.Core.Domain;
@@ -8,20 +7,33 @@ using MuxLlmProxy.Infrastructure.Translation;
 
 namespace MuxLlmProxy.Infrastructure.Providers.ChatGpt;
 
+/// <summary>
+/// Transforms normalized proxy requests into ChatGPT backend-api compatible payloads.
+/// </summary>
 public sealed class ChatGptRequestTransformer
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
-    private static readonly Regex SystemReminderRegex = new("(?is)<system-reminder>.*?</system-reminder>", RegexOptions.Compiled);
 
     private readonly IMessageTranslator _messageTranslator;
     private readonly ChatGptModelCatalog _modelCatalog;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ChatGptRequestTransformer"/> class.
+    /// </summary>
+    /// <param name="messageTranslator">The message translator dependency.</param>
+    /// <param name="modelCatalog">The model catalog dependency.</param>
     public ChatGptRequestTransformer(IMessageTranslator messageTranslator, ChatGptModelCatalog modelCatalog)
     {
         _messageTranslator = messageTranslator;
         _modelCatalog = modelCatalog;
     }
 
+    /// <summary>
+    /// Transforms the supplied proxy request into a ChatGPT backend-api compatible payload.
+    /// </summary>
+    /// <param name="request">The normalized proxy request.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The serialized backend-api request payload.</returns>
     public async Task<byte[]> TransformAsync(ProxyRequest request, CancellationToken cancellationToken)
     {
         if (request.Format == ProxyFormat.OpenAiResponses)
@@ -101,6 +113,12 @@ public sealed class ChatGptRequestTransformer
         return JsonSerializer.SerializeToUtf8Bytes(payload, SerializerOptions);
     }
 
+    /// <summary>
+    /// Specialized transformation for the ChatGPT-specific 'responses' backend API.
+    /// </summary>
+    /// <param name="request">The responses proxy request.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The serialized responses payload.</returns>
     private async Task<byte[]> TransformResponsesAsync(ProxyRequest request, CancellationToken cancellationToken)
     {
         var root = JsonNode.Parse(request.Body)?.AsObject()
@@ -144,6 +162,11 @@ public sealed class ChatGptRequestTransformer
         return JsonSerializer.SerializeToUtf8Bytes(root, SerializerOptions);
     }
 
+    /// <summary>
+    /// Extracts system or developer instructions from a set of conversation messages.
+    /// </summary>
+    /// <param name="messages">The message list.</param>
+    /// <returns>The combined instruction text, or <see langword="null"/>.</returns>
     private static string? ExtractInstructions(IReadOnlyList<OpenAiMessage> messages)
     {
         var instructions = messages
@@ -157,6 +180,11 @@ public sealed class ChatGptRequestTransformer
             : string.Join("\n\n", instructions);
     }
 
+    /// <summary>
+    /// Returns a new message list with instruction-type roles removed.
+    /// </summary>
+    /// <param name="messages">The original messages.</param>
+    /// <returns>The filtered message list.</returns>
     private static IReadOnlyList<OpenAiMessage> RemoveInstructionMessages(IReadOnlyList<OpenAiMessage> messages)
     {
         return messages
@@ -164,12 +192,22 @@ public sealed class ChatGptRequestTransformer
             .ToArray();
     }
 
+    /// <summary>
+    /// Determines whether a message role represents developer or system instructions.
+    /// </summary>
+    /// <param name="message">The message to check.</param>
+    /// <returns><see langword="true"/> when the role is an instruction; otherwise <see langword="false"/>.</returns>
     private static bool IsInstructionMessage(OpenAiMessage message)
     {
         return string.Equals(message.Role, "developer", StringComparison.OrdinalIgnoreCase)
             || string.Equals(message.Role, "system", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Ensures that mandatory metadata fields are included in the response request.
+    /// </summary>
+    /// <param name="include">The existing include array.</param>
+    /// <returns>The ensured include array.</returns>
     private static JsonArray EnsureInclude(JsonArray? include)
     {
         var result = include is null ? [] : new JsonArray(include.Select(node => node?.DeepClone()).ToArray());
@@ -187,6 +225,11 @@ public sealed class ChatGptRequestTransformer
         return result;
     }
 
+    /// <summary>
+    /// Sanitizes the 'text' configuration block for the backend API.
+    /// </summary>
+    /// <param name="text">The text node.</param>
+    /// <returns>The sanitized text node.</returns>
     private static JsonObject EnsureText(JsonObject? text)
     {
         var result = text is null ? new JsonObject() : JsonNode.Parse(text.ToJsonString())?.AsObject() ?? new JsonObject();
@@ -198,6 +241,13 @@ public sealed class ChatGptRequestTransformer
         return result;
     }
 
+    /// <summary>
+    /// Sanitizes and normalizes the 'reasoning' configuration block.
+    /// </summary>
+    /// <param name="normalizedModel">The normalized model name.</param>
+    /// <param name="reasoning">The reasoning node.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The sanitized reasoning node.</returns>
     private async Task<JsonObject> EnsureReasoningAsync(string normalizedModel, JsonObject? reasoning, CancellationToken cancellationToken)
     {
         var result = reasoning is null ? new JsonObject() : JsonNode.Parse(reasoning.ToJsonString())?.AsObject() ?? new JsonObject();
@@ -206,6 +256,11 @@ public sealed class ChatGptRequestTransformer
         return result;
     }
 
+    /// <summary>
+    /// Cleans the input item list by removing identifiers and unsupported item types.
+    /// </summary>
+    /// <param name="input">The raw initial input.</param>
+    /// <returns>The filtered input array.</returns>
     private static JsonArray FilterInput(JsonArray input)
     {
         var result = new JsonArray();
@@ -230,6 +285,11 @@ public sealed class ChatGptRequestTransformer
         return result;
     }
 
+    /// <summary>
+    /// Extracts system instructions from a JSON-based input collection.
+    /// </summary>
+    /// <param name="input">The input array.</param>
+    /// <returns>The extracted instructions.</returns>
     private static string? ExtractInstructions(JsonArray input)
     {
         var instructions = input
@@ -244,6 +304,11 @@ public sealed class ChatGptRequestTransformer
             : string.Join("\n\n", instructions);
     }
 
+    /// <summary>
+    /// Removes instruction-role items from a JSON-based input collection.
+    /// </summary>
+    /// <param name="input">The original input.</param>
+    /// <returns>The pruned input array.</returns>
     private static JsonArray RemoveInstructionItems(JsonArray input)
     {
         var result = new JsonArray();
@@ -260,6 +325,11 @@ public sealed class ChatGptRequestTransformer
         return result;
     }
 
+    /// <summary>
+    /// Determines whether a JSON input item represents an instruction role.
+    /// </summary>
+    /// <param name="item">The item to inspect.</param>
+    /// <returns><see langword="true"/> when the item is an instruction; otherwise <see langword="false"/>.</returns>
     private static bool IsInstructionItem(JsonObject item)
     {
         var role = item["role"]?.GetValue<string>();
@@ -267,6 +337,11 @@ public sealed class ChatGptRequestTransformer
             || string.Equals(role, "system", StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>
+    /// Replaces tool outputs that lack a preceding tool call in the context with assistant-role markers.
+    /// </summary>
+    /// <param name="input">The input collection.</param>
+    /// <returns>The normalized input collection.</returns>
     private static JsonArray NormalizeOrphanedToolOutputs(JsonArray input)
     {
         var functionCallIds = new HashSet<string>(StringComparer.Ordinal);
@@ -344,6 +419,11 @@ public sealed class ChatGptRequestTransformer
         return result;
     }
 
+    /// <summary>
+    /// Normalizes and cleans conversation messages for the backend-api.
+    /// </summary>
+    /// <param name="messages">The source messages.</param>
+    /// <returns>The pruned message list.</returns>
     private static IReadOnlyList<OpenAiMessage> PruneConversationMessages(IReadOnlyList<OpenAiMessage> messages)
     {
         var result = new List<OpenAiMessage>(messages.Count);
@@ -377,6 +457,11 @@ public sealed class ChatGptRequestTransformer
         return DeduplicateConsecutiveAssistantMessages(result);
     }
 
+    /// <summary>
+    /// Prunes and normalizes input markers in a JSON-based collection.
+    /// </summary>
+    /// <param name="input">The input array.</param>
+    /// <returns>The cleaned array.</returns>
     private static JsonArray PruneInputMessages(JsonArray input)
     {
         var result = new JsonArray();
@@ -417,12 +502,22 @@ public sealed class ChatGptRequestTransformer
         return result;
     }
 
+    /// <summary>
+    /// Converts and prunes a dictionary-based input set to the JSON-based format.
+    /// </summary>
+    /// <param name="input">The source input.</param>
+    /// <returns>The pruned JSON array.</returns>
     private static JsonArray PruneMappedInput(IReadOnlyList<Dictionary<string, object?>> input)
     {
         var serialized = JsonSerializer.SerializeToNode(input, SerializerOptions) as JsonArray ?? [];
         return PruneInputMessages(serialized);
     }
 
+    /// <summary>
+    /// Collapses consecutive assistant messages with identical text.
+    /// </summary>
+    /// <param name="messages">The messages list.</param>
+    /// <returns>The deduplicated list.</returns>
     private static IReadOnlyList<OpenAiMessage> DeduplicateConsecutiveAssistantMessages(IReadOnlyList<OpenAiMessage> messages)
     {
         var result = new List<OpenAiMessage>(messages.Count);
@@ -451,6 +546,11 @@ public sealed class ChatGptRequestTransformer
         return result;
     }
 
+    /// <summary>
+    /// Sanitizes and potentially augments instruction text.
+    /// </summary>
+    /// <param name="text">The raw instructions.</param>
+    /// <returns>The sanitized instructions.</returns>
     private static string SanitizeInstructionText(string text)
     {
         var planModeDirective = ExtractPlanModeDirective(text);
@@ -464,76 +564,21 @@ public sealed class ChatGptRequestTransformer
         return AppendDirective(stripped, planModeDirective);
     }
 
+    /// <summary>
+    /// Determines whether a specific assistant message text should be dropped.
+    /// </summary>
+    /// <param name="text">The assistant text.</param>
+    /// <returns><see langword="true"/> when the text is transient; otherwise <see langword="false"/>.</returns>
     private static bool ShouldDropTransientAssistantText(string text)
     {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return true;
-        }
-
-        if (PromptTextSanitizer.ContainsClientHarness(text))
-        {
-            return true;
-        }
-
-        var normalized = text.Trim();
-        return normalized.StartsWith("Thinking:", StringComparison.OrdinalIgnoreCase)
-            || normalized.StartsWith("# Todos", StringComparison.Ordinal)
-            || normalized.StartsWith("Preparing for", StringComparison.OrdinalIgnoreCase)
-            || normalized.StartsWith("Deciding on", StringComparison.OrdinalIgnoreCase)
-            || normalized.StartsWith("I need to", StringComparison.OrdinalIgnoreCase)
-            || normalized.StartsWith("I’m ", StringComparison.OrdinalIgnoreCase)
-            || normalized.StartsWith("I'm ", StringComparison.OrdinalIgnoreCase)
-            || normalized.Contains("Statik dosyalari", StringComparison.OrdinalIgnoreCase)
-            || normalized.Contains("Mevcut HTML", StringComparison.OrdinalIgnoreCase)
-            || normalized.Contains("Mevcut HTML/CSS/JS", StringComparison.OrdinalIgnoreCase)
-            || normalized.Contains("Plan mode", StringComparison.OrdinalIgnoreCase)
-            || normalized.Contains("TaskCreate", StringComparison.OrdinalIgnoreCase)
-            || normalized.Contains("AskUserQuestion", StringComparison.OrdinalIgnoreCase);
+        return PromptTextSanitizer.ShouldDropTransientText(text);
     }
 
-    private static bool IsPlanningToolName(string? toolName)
-    {
-        if (string.IsNullOrWhiteSpace(toolName))
-        {
-            return false;
-        }
-
-        return toolName is "TaskCreate"
-            or "TaskUpdate"
-            or "TaskRead"
-            or "EnterPlanMode"
-            or "ExitPlanMode"
-            or "Agent"
-            or "AskUserQuestion"
-            or "todowrite"
-            or "todoread"
-            or "task"
-            or "question";
-    }
-
-    private static bool IsPlanningToolOutput(JsonNode? output)
-    {
-        var text = output switch
-        {
-            JsonValue value when value.TryGetValue<string>(out var stringValue) => stringValue,
-            null => string.Empty,
-            _ => output.ToJsonString()
-        };
-
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return false;
-        }
-
-        return text.Contains("Entered plan mode", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("Task #", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("Updated task", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("created successfully", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("Cannot create agent worktree", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("Use AskUserQuestion", StringComparison.OrdinalIgnoreCase);
-    }
-
+    /// <summary>
+    /// Identifies and returns the planning mode enforcement directive if present in the text.
+    /// </summary>
+    /// <param name="text">The text to analyze.</param>
+    /// <returns>The plan-mode directive, or empty.</returns>
     private static string ExtractPlanModeDirective(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -558,6 +603,11 @@ public sealed class ChatGptRequestTransformer
         return string.Empty;
     }
 
+    /// <summary>
+    /// Identifies the plan-mode directive from a set of conversation messages.
+    /// </summary>
+    /// <param name="messages">The message list.</param>
+    /// <returns>The directive, or empty.</returns>
     private static string ExtractPlanModeDirective(IReadOnlyList<OpenAiMessage> messages)
     {
         foreach (var message in messages)
@@ -572,6 +622,11 @@ public sealed class ChatGptRequestTransformer
         return string.Empty;
     }
 
+    /// <summary>
+    /// Identifies the plan-mode directive from a JSON input collection.
+    /// </summary>
+    /// <param name="input">The JSON array.</param>
+    /// <returns>The directive, or empty.</returns>
     private static string ExtractPlanModeDirective(JsonArray input)
     {
         foreach (var item in input.OfType<JsonObject>())
@@ -603,6 +658,11 @@ public sealed class ChatGptRequestTransformer
         return string.Empty;
     }
 
+    /// <summary>
+    /// Identifies the plan-mode directive from the raw request body.
+    /// </summary>
+    /// <param name="body">The body bytes.</param>
+    /// <returns>The directive string.</returns>
     private static string ExtractPlanModeDirectiveFromRawBody(byte[] body)
     {
         if (body.Length == 0)
@@ -613,6 +673,12 @@ public sealed class ChatGptRequestTransformer
         return ExtractPlanModeDirective(System.Text.Encoding.UTF8.GetString(body));
     }
 
+    /// <summary>
+    /// Appends a directive string to instruction text.
+    /// </summary>
+    /// <param name="text">The base text.</param>
+    /// <param name="directive">The directive.</param>
+    /// <returns>The combined text.</returns>
     private static string AppendDirective(string? text, string directive)
     {
         if (string.IsNullOrWhiteSpace(directive))
@@ -628,6 +694,11 @@ public sealed class ChatGptRequestTransformer
         return $"{text}\n\n{directive}";
     }
 
+    /// <summary>
+    /// Removes internal-only or harness-related lines from text.
+    /// </summary>
+    /// <param name="text">The source text.</param>
+    /// <returns>The cleaned text.</returns>
     private static string StripHarnessLines(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -647,16 +718,23 @@ public sealed class ChatGptRequestTransformer
         return lines.Length == 0 ? string.Empty : string.Join("\n", lines);
     }
 
+    /// <summary>
+    /// Removes system markers from text using the prompt sanitizer.
+    /// </summary>
+    /// <param name="text">The text to strip.</param>
+    /// <returns>The sanitized text.</returns>
     private static string StripSystemReminders(string text)
     {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return string.Empty;
-        }
-
-        return SystemReminderRegex.Replace(text, string.Empty).Trim();
+        return PromptTextSanitizer.Sanitize(text);
     }
 
+    /// <summary>
+    /// Creates a standard text-based input item for the backend API.
+    /// </summary>
+    /// <param name="role">The item role.</param>
+    /// <param name="text">The message text.</param>
+    /// <param name="partType">The content part type.</param>
+    /// <returns>The formed object.</returns>
     private static JsonObject CreateTextInputMessage(string role, string text, string partType)
     {
         return new JsonObject
@@ -671,6 +749,11 @@ public sealed class ChatGptRequestTransformer
         };
     }
 
+    /// <summary>
+    /// Attempts to extract the primary text content from a JSON-based input item.
+    /// </summary>
+    /// <param name="item">The input item node.</param>
+    /// <returns>The extracted text, or empty.</returns>
     private static string GetInputItemContentText(JsonObject item)
     {
         if (item["content"] is JsonValue contentValue && contentValue.TryGetValue<string>(out var contentText))

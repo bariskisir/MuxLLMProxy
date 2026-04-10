@@ -15,9 +15,15 @@ public sealed class ProxyConfigurationProvider : IProxyConfigurationProvider
     /// Initializes a new instance of the <see cref="ProxyConfigurationProvider"/> class.
     /// </summary>
     /// <param name="options">The bound proxy options.</param>
+    /// <exception cref="InvalidOperationException">Thrown when the configured port is invalid.</exception>
     public ProxyConfigurationProvider(IOptions<ProxyOptions> options)
     {
         _options = options.Value;
+
+        if (_options.Port <= 0)
+        {
+            throw new InvalidOperationException("The configured port must be greater than zero.");
+        }
     }
 
     /// <summary>
@@ -27,11 +33,6 @@ public sealed class ProxyConfigurationProvider : IProxyConfigurationProvider
     /// <returns>The loaded configuration.</returns>
     public Task<ProxyOptions> GetAsync(CancellationToken cancellationToken)
     {
-        if (_options.Port <= 0)
-        {
-            throw new InvalidOperationException("The configured port must be greater than zero.");
-        }
-
         return Task.FromResult(_options with
         {
             Token = _options.Token ?? string.Empty,

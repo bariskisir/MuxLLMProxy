@@ -4,10 +4,16 @@ using MuxLlmProxy.Core.Domain;
 
 namespace MuxLlmProxy.Infrastructure.Translation;
 
+/// <summary>
+/// Holds a normalized OpenAI request alongside its extracted conversation messages.
+/// </summary>
 internal sealed record NormalizedOpenAiRequest(
     OpenAiChatRequest Source,
     IReadOnlyList<OpenAiMessage> ConversationMessages);
 
+/// <summary>
+/// Normalizes OpenAI chat request payloads for upstream consumption.
+/// </summary>
 internal static class OpenAiRequestNormalizer
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
@@ -30,6 +36,11 @@ internal static class OpenAiRequestNormalizer
         return tools;
     }
 
+    /// <summary>
+    /// Flattens a message content value (string, JsonElement, or object) into a plain text string.
+    /// </summary>
+    /// <param name="content">The message content to flatten.</param>
+    /// <returns>The flattened text representation.</returns>
     public static string FlattenMessageContent(object? content)
     {
         if (content is null)

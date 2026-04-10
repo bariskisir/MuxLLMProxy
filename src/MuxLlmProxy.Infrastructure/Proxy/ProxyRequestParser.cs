@@ -83,6 +83,13 @@ public sealed class ProxyRequestParser : IProxyRequestParser
         }
     }
 
+    /// <summary>
+    /// Attempts to parse the request as a ChatGPT-specific 'responses' backend API payload.
+    /// </summary>
+    /// <param name="body">The raw request body bytes.</param>
+    /// <param name="model">The extracted model name.</param>
+    /// <param name="stream">The extracted stream preference.</param>
+    /// <returns><see langword="true"/> when parsing succeeds; otherwise <see langword="false"/>.</returns>
     private static bool TryParseOpenAiResponses(byte[] body, out string model, out bool stream)
     {
         try

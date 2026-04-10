@@ -202,6 +202,11 @@ public sealed class AccountStore : IAccountStore
         }
     }
 
+    /// <summary>
+    /// Normalizes account timestamps to ensure they are in seconds format.
+    /// </summary>
+    /// <param name="account">The account to normalize.</param>
+    /// <returns>The normalized account.</returns>
     private static Account NormalizeAccount(Account account)
     {
         return account with
@@ -211,6 +216,11 @@ public sealed class AccountStore : IAccountStore
         };
     }
 
+    /// <summary>
+    /// Converts a timestamp from milliseconds to seconds if it appears to be in the larger magnitude.
+    /// </summary>
+    /// <param name="value">The timestamp value.</param>
+    /// <returns>The normalized timestamp.</returns>
     private static long? NormalizeUnixTimestamp(long? value)
     {
         if (value is null)

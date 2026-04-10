@@ -48,6 +48,10 @@ public sealed class WeeklyLimitSyncService : BackgroundService
         }
     }
 
+    /// <summary>
+    /// Orchestrates the synchronization of account limits for all tracked providers.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
     private async Task SyncAsync(CancellationToken cancellationToken)
     {
         try
@@ -71,6 +75,14 @@ public sealed class WeeklyLimitSyncService : BackgroundService
         }
     }
 
+    /// <summary>
+    /// Synchronizes the weekly limit metadata for a single account.
+    /// </summary>
+    /// <param name="account">The account to sync.</param>
+    /// <param name="providerMap">The provider type lookup table.</param>
+    /// <param name="now">The current Unix timestamp in seconds.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns> The updated account model.</returns>
     private async Task<Account> SyncAccountAsync(
         Account account,
         IReadOnlyDictionary<string, ProviderType> providerMap,

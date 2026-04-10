@@ -70,6 +70,10 @@ public sealed class CliCommandRunner
         }
     }
 
+    /// <summary>
+    /// Processes the 'add' command to register a new provider account.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
     private async Task RunAddAsync(CancellationToken cancellationToken)
     {
         var providers = (await _providerCatalog.GetAsync(cancellationToken))
@@ -102,6 +106,10 @@ public sealed class CliCommandRunner
         Console.WriteLine($"Saved {ToDisplayName(selectedProvider.Id)} account: {account.Id}");
     }
 
+    /// <summary>
+    /// Processes the 'limits' command to display account usage and quotas.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
     private async Task RunLimitsAsync(CancellationToken cancellationToken)
     {
         var entries = await _limitsQueryService.GetLimitsAsync(cancellationToken);
@@ -148,6 +156,11 @@ public sealed class CliCommandRunner
         }
     }
 
+    /// <summary>
+    /// Reads a numeric provider selection from the console.
+    /// </summary>
+    /// <param name="maxOption">The maximum valid option number.</param>
+    /// <returns>The selected option index (1-based).</returns>
     private static int ReadProviderSelection(int maxOption)
     {
         while (true)
@@ -163,6 +176,11 @@ public sealed class CliCommandRunner
         }
     }
 
+    /// <summary>
+    /// Orchestrates the interactive OAuth flow for a new ChatGPT account.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The newly created account.</returns>
     private async Task<Account> CreateChatGptAccountAsync(CancellationToken cancellationToken)
     {
         var verifier = CreateCodeVerifier();
@@ -203,6 +221,10 @@ public sealed class CliCommandRunner
         };
     }
 
+    /// <summary>
+    /// Creates a placeholder account for the OpenCode provider.
+    /// </summary>
+    /// <returns>The OpenCode account.</returns>
     private static Account CreateOpenCodeAccount()
     {
         return new Account
@@ -214,6 +236,10 @@ public sealed class CliCommandRunner
         };
     }
 
+    /// <summary>
+    /// Prompts for an API token and creates an OpenRouter account.
+    /// </summary>
+    /// <returns>The OpenRouter account.</returns>
     private static Account CreateOpenRouterAccount()
     {
         var token = ReadRequiredValue(ProxyConstants.Messages.OpenRouterTokenPrompt);
@@ -226,6 +252,11 @@ public sealed class CliCommandRunner
         };
     }
 
+    /// <summary>
+    /// Prompts the user for a required console input value.
+    /// </summary>
+    /// <param name="prompt">The prompt message.</param>
+    /// <returns>The non-empty input value.</returns>
     private static string ReadRequiredValue(string prompt)
     {
         while (true)
@@ -241,6 +272,12 @@ public sealed class CliCommandRunner
         }
     }
 
+    /// <summary>
+    /// Constructs the OAuth authorization URL for ChatGPT.
+    /// </summary>
+    /// <param name="state">The OAuth state parameter.</param>
+    /// <param name="verifier">The PKCE code verifier.</param>
+    /// <returns>The encoded authorization URL.</returns>
     private static string BuildAuthorizationUrl(string state, string verifier)
     {
         var url = new UriBuilder(ProxyConstants.Cli.ChatGptAuthorizeUrl);
@@ -261,6 +298,11 @@ public sealed class CliCommandRunner
         return url.ToString();
     }
 
+    /// <summary>
+    /// Returns the human-readable label for a provider identifier.
+    /// </summary>
+    /// <param name="providerId">The provider identifier.</param>
+    /// <returns>The display name.</returns>
     private static string ToDisplayName(string providerId)
     {
         return providerId switch
@@ -272,6 +314,11 @@ public sealed class CliCommandRunner
         };
     }
 
+    /// <summary>
+    /// Trims the provider prefix from an account identifier for display.
+    /// </summary>
+    /// <param name="entry">The limit entry containing the ID.</param>
+    /// <returns>The normalized account name.</returns>
     private static string NormalizeAccountName(LimitEntry entry)
     {
         var prefix = $"{entry.TypeId}_";
@@ -280,6 +327,11 @@ public sealed class CliCommandRunner
             : entry.Id;
     }
 
+    /// <summary>
+    /// Formats the usage bar or status text for an account.
+    /// </summary>
+    /// <param name="entry">The limit entry to format.</param>
+    /// <returns>The usage string.</returns>
     private static string FormatUsage(LimitEntry entry)
     {
         if (!entry.HasLimits)
@@ -295,6 +347,10 @@ public sealed class CliCommandRunner
         return $"[{BuildBar(entry.Limit.LeftPercent)}]";
     }
 
+    /// <summary>
+    /// Renders an aggregate usage bar for all accounts of a provider.
+    /// </summary>
+    /// <param name="group">The provider limit group.</param>
     private static void RenderProviderAggregate(ProviderLimitGroup group)
     {
         var totalCapacity = group.Entries.Length * 100;
@@ -303,6 +359,10 @@ public sealed class CliCommandRunner
         Console.WriteLine($"{ToDisplayName(group.ProviderId)}: [{BuildAggregateBar(totalRemaining, totalCapacity)}] {totalRemaining}/{totalCapacity}");
     }
 
+    /// <summary>
+    /// Renders a detailed table of account limits for a provider.
+    /// </summary>
+    /// <param name="group">The provider limit group.</param>
     private static void RenderProviderLimits(ProviderLimitGroup group)
     {
         var sortedEntries = group.Entries
@@ -331,6 +391,11 @@ public sealed class CliCommandRunner
         Console.WriteLine();
     }
 
+    /// <summary>
+    /// Builds a single account progress bar.
+    /// </summary>
+    /// <param name="leftPercent">The remaining percentage (0-100).</param>
+    /// <returns>The ASCII progress bar.</returns>
     private static string BuildBar(int leftPercent)
     {
         const int barLength = ProxyConstants.Defaults.ProgressBarWidth;
@@ -339,6 +404,12 @@ public sealed class CliCommandRunner
         return new string('#', filledCount) + new string('.', barLength - filledCount);
     }
 
+    /// <summary>
+    /// Builds an aggregate progress bar for multiple accounts.
+    /// </summary>
+    /// <param name="remaining">The sum of remaining percentages.</param>
+    /// <param name="capacity">The sum of total capacities.</param>
+    /// <returns>The ASCII progress bar.</returns>
     private static string BuildAggregateBar(int remaining, int capacity)
     {
         const int barLength = ProxyConstants.Defaults.ProgressBarWidth;
@@ -352,11 +423,22 @@ public sealed class CliCommandRunner
         return new string('#', filledCount) + new string('.', barLength - filledCount);
     }
 
+    /// <summary>
+    /// Formats a Unix timestamp as a localized reset date/time.
+    /// </summary>
+    /// <param name="resetsAt">The Unix timestamp in seconds.</param>
+    /// <returns>The formatted string.</returns>
     private static string FormatReset(long resetsAt)
     {
         return DateTimeOffset.FromUnixTimeSeconds(resetsAt).ToLocalTime().ToString("MMM dd, HH:mm", CultureInfo.InvariantCulture);
     }
 
+    /// <summary>
+    /// Renders a formatted ASCII table to the console.
+    /// </summary>
+    /// <param name="title">Optional table title.</param>
+    /// <param name="headers">The column headers.</param>
+    /// <param name="rows">The table data rows.</param>
     private static void RenderTable(string? title, string[] headers, string[][] rows)
     {
         var widths = headers
@@ -377,17 +459,35 @@ public sealed class CliCommandRunner
         }
     }
 
+    /// <summary>
+    /// Formats a single table row with pipe separators.
+    /// </summary>
+    /// <param name="cells">The row cells.</param>
+    /// <param name="widths">The column widths.</param>
+    /// <returns>The formatted row string.</returns>
     private static string BuildTableRow(IReadOnlyList<string> cells, IReadOnlyList<int> widths)
     {
         var padded = cells.Select((cell, index) => cell.PadRight(widths[index]));
         return $"| {string.Join(" | ", padded)} |";
     }
 
+    /// <summary>
+    /// Builds an ASCII table separator line.
+    /// </summary>
+    /// <param name="widths">The column widths.</param>
+    /// <returns>The separator string.</returns>
     private static string BuildSeparator(IReadOnlyList<int> widths)
     {
         return $"|-{string.Join("-|-", widths.Select(width => new string('-', width)))}-|";
     }
 
+    /// <summary>
+    /// Exchanges an OAuth authorization code for access and refresh tokens.
+    /// </summary>
+    /// <param name="code">The authorization code.</param>
+    /// <param name="verifier">The PKCE code verifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The resulting token set and expiration.</returns>
     private async Task<TokenResult> ExchangeAuthorizationCodeAsync(string code, string verifier, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, ProxyConstants.Cli.ChatGptTokenUrl)
@@ -424,6 +524,11 @@ public sealed class CliCommandRunner
             DateTimeOffset.UtcNow.AddSeconds(expiresInElement.GetInt64()).ToUnixTimeMilliseconds());
     }
 
+    /// <summary>
+    /// Parses the code and state from an OAuth callback URL or raw input.
+    /// </summary>
+    /// <param name="input">The input string to parse.</param>
+    /// <returns>A tuple containing the code and state.</returns>
     private static (string? Code, string? State) ParseAuthorizationInput(string input)
     {
         var trimmed = input.Trim();
@@ -453,6 +558,11 @@ public sealed class CliCommandRunner
         return (trimmed, null);
     }
 
+    /// <summary>
+    /// Parses a URL-encoded query string into a dictionary.
+    /// </summary>
+    /// <param name="query">The query string.</param>
+    /// <returns>The parsed key-value pairs.</returns>
     private static Dictionary<string, string> ParseQueryString(string query)
     {
         var normalized = query.TrimStart('?', '#');
@@ -469,6 +579,10 @@ public sealed class CliCommandRunner
         return result;
     }
 
+    /// <summary>
+    /// Generates a cryptographically secure PKCE code verifier.
+    /// </summary>
+    /// <returns>The base64-encoded verifier.</returns>
     private static string CreateCodeVerifier()
     {
         Span<byte> bytes = stackalloc byte[32];
@@ -479,6 +593,10 @@ public sealed class CliCommandRunner
             .Replace('/', '_');
     }
 
+    /// <summary>
+    /// Generates a random session state for OAuth.
+    /// </summary>
+    /// <returns>The hex-encoded state.</returns>
     private static string CreateState()
     {
         Span<byte> bytes = stackalloc byte[16];
@@ -486,6 +604,11 @@ public sealed class CliCommandRunner
         return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 
+    /// <summary>
+    /// Creates a PKCE code challenge from a verifier using SHA256.
+    /// </summary>
+    /// <param name="verifier">The code verifier.</param>
+    /// <returns>The base64-encoded challenge.</returns>
     private static string CreateCodeChallenge(string verifier)
     {
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(verifier));
@@ -495,6 +618,11 @@ public sealed class CliCommandRunner
             .Replace('/', '_');
     }
 
+    /// <summary>
+    /// Attempts to extract an email address from JWT profile claims.
+    /// </summary>
+    /// <param name="token">The JWT string.</param>
+    /// <returns>The email address if found; otherwise <see langword="null"/>.</returns>
     private static string? TryExtractEmailFromJwt(string token)
     {
         return JwtUtilities.TryReadStringClaim(token, "https://api.openai.com/profile", "email")

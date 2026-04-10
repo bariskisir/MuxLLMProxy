@@ -18,6 +18,8 @@ public sealed class RoundRobinState : IRoundRobinState
     /// <returns>The starting offset.</returns>
     public int GetOffset(string key, int count)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+
         if (count <= 0)
         {
             return 0;
@@ -37,6 +39,8 @@ public sealed class RoundRobinState : IRoundRobinState
     /// <param name="usedIndex">The provider-local index that succeeded inside the rotated list.</param>
     public void Advance(string key, int count, int currentOffset, int usedIndex)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(key);
+
         if (count <= 0)
         {
             return;

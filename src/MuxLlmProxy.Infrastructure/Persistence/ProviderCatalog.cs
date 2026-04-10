@@ -67,6 +67,11 @@ public sealed class ProviderCatalog : IProviderCatalog
         return _providerTypes;
     }
 
+    /// <summary>
+    /// Ensures that the provider and model data is loaded from the configuration file.
+    /// </summary>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>A task that completes when the data is loaded.</returns>
     private async Task EnsureLoadedAsync(CancellationToken cancellationToken)
     {
         if (_loaded)
@@ -120,18 +125,39 @@ public sealed class ProviderCatalog : IProviderCatalog
         }
     }
 
+    /// <summary>
+    /// Represents a serialized entry in the provider model catalog.
+    /// </summary>
     private sealed record ProviderModelEntry
     {
+        /// <summary>
+        /// Gets the identifier of the provider this model belongs to.
+        /// </summary>
         public required string ProviderId { get; init; }
 
+        /// <summary>
+        /// Gets the primary model identifier.
+        /// </summary>
         public required string Id { get; init; }
 
+        /// <summary>
+        /// Gets the human-readable display name for the model.
+        /// </summary>
         public required string Name { get; init; }
 
+        /// <summary>
+        /// Gets any aliases that also resolve to this model.
+        /// </summary>
         public IReadOnlyList<string>? Aliases { get; init; }
 
+        /// <summary>
+        /// Gets a value indicating whether the model supports the 'x-high' reasoning effort level.
+        /// </summary>
         public bool SupportsXHigh { get; init; }
 
+        /// <summary>
+        /// Gets a value indicating whether the model supports the 'disabled' reasoning effort level.
+        /// </summary>
         public bool SupportsNone { get; init; }
     }
 }

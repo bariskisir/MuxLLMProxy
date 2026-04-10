@@ -61,6 +61,11 @@ public sealed class ProxyLoggingMiddleware
         }
     }
 
+    /// <summary>
+    /// Reads the inbound request body bytes into a string, ensuring the stream is repositioned for subsequent middleware.
+    /// </summary>
+    /// <param name="context">The current HTTP context.</param>
+    /// <returns>The request body string.</returns>
     private static async Task<string> ReadRequestBodyAsync(HttpContext context)
     {
         if (context.Request.Body is null || !context.Request.Body.CanRead)

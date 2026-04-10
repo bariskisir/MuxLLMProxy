@@ -143,7 +143,7 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         var messageId = TryExtractResponseIdFromStream(openAiStreamBytes) ?? $"msg_{Guid.NewGuid():N}";
         var builder = new StringBuilder();
         builder.AppendLine("event: message_start");
-        builder.AppendLine($"data: {{\"type\":\"message_start\",\"message\":{{\"id\":{JsonSerializer.Serialize(messageId)},\"type\":\"message\",\"role\":\"assistant\",\"model\":\"{model}\",\"content\":[]}}}}");
+        builder.AppendLine($"data: {{\"type\":\"message_start\",\"message\":{{\"id\":{JsonSerializer.Serialize(messageId)},\"type\":\"message\",\"role\":\"assistant\",\"model\":\"{model}\",\"content\":[],\"usage\":{{\"input_tokens\":0,\"output_tokens\":0}}}}}}");
         builder.AppendLine();
 
         var startedTextBlock = false;
@@ -254,6 +254,11 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         return Encoding.UTF8.GetBytes(builder.ToString());
     }
 
+    /// <summary>
+    /// Attempts to locate the first response ID in an OpenAI SSE stream.
+    /// </summary>
+    /// <param name="openAiStreamBytes">The stream bytes.</param>
+    /// <returns>The found identifier, or <see langword="null"/>.</returns>
     private static string? TryExtractResponseIdFromStream(byte[] openAiStreamBytes)
     {
         foreach (var rawLine in Encoding.UTF8.GetString(openAiStreamBytes).Split('\n', StringSplitOptions.RemoveEmptyEntries))
@@ -294,6 +299,11 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         return null;
     }
 
+    /// <summary>
+    /// Maps an Anthropic tool definition to the OpenAI equivalent.
+    /// </summary>
+    /// <param name="tool">The Anthropic tool definition.</param>
+    /// <returns>The OpenAI tool definition, or <see langword="null"/> if invalid.</returns>
     private static OpenAiTool? CreateOpenAiTool(AnthropicTool tool)
     {
         var name = tool.Name;
@@ -324,6 +334,11 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         };
     }
 
+    /// <summary>
+    /// Extracts tool use identifiers and parameters from an OpenAI message.
+    /// </summary>
+    /// <param name="message">The message JSON element.</param>
+    /// <returns>A list of Anthropic-formatted tool use blocks.</returns>
     private static List<object> ExtractToolUseBlocks(JsonElement message)
     {
         var blocks = new List<object>();
@@ -355,6 +370,11 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         return blocks;
     }
 
+    /// <summary>
+    /// Flattens complex Anthropic content blocks into a single string.
+    /// </summary>
+    /// <param name="contentElement">The content element.</param>
+    /// <returns>The flattened string.</returns>
     private static string FlattenAnthropicContent(JsonElement contentElement)
     {
         if (contentElement.ValueKind == JsonValueKind.String)
@@ -386,6 +406,11 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         return string.Join("\n", parts);
     }
 
+    /// <summary>
+    /// Extracts tool results from an Anthropic message content array.
+    /// </summary>
+    /// <param name="contentElement">The content array element.</param>
+    /// <returns>A list of tool use IDs and their corresponding content.</returns>
     private static IReadOnlyList<(string ToolUseId, string Content)> ExtractToolResults(JsonElement contentElement)
     {
         var results = new List<(string ToolUseId, string Content)>();
@@ -418,6 +443,11 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         return results;
     }
 
+    /// <summary>
+    /// Translates a sequence of Anthropic messages to the OpenAI format.
+    /// </summary>
+    /// <param name="messages">The source Anthropic messages.</param>
+    /// <returns>The translated OpenAI messages.</returns>
     private static IReadOnlyList<OpenAiMessage> TranslateAnthropicMessages(IReadOnlyList<AnthropicMessage> messages)
     {
         var translated = new List<OpenAiMessage>();
@@ -472,6 +502,11 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         return translated;
     }
 
+    /// <summary>
+    /// Specifically extracts and sanitizes text content from a user-role content block.
+    /// </summary>
+    /// <param name="contentElement">The content block.</param>
+    /// <returns>The sanitized text.</returns>
     private static string ExtractUserTextContent(JsonElement contentElement)
     {
         if (contentElement.ValueKind == JsonValueKind.String)
@@ -516,6 +551,12 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         return PromptTextSanitizer.Sanitize(string.Join("\n", parts));
     }
 
+    /// <summary>
+    /// Translates an assistant-role message that contains tool usage.
+    /// </summary>
+    /// <param name="contentElement">The assistant message content.</param>
+    /// <param name="message">The resulting OpenAI message.</param>
+    /// <returns><see langword="true"/> if translation succeeded; otherwise <see langword="false"/>.</returns>
     private static bool TryTranslateAssistantToolUseMessage(JsonElement contentElement, out OpenAiMessage message)
     {
         message = null!;
@@ -579,6 +620,11 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         return true;
     }
 
+    /// <summary>
+    /// Flattens arbitrary content objects into a string.
+    /// </summary>
+    /// <param name="content">The content object.</param>
+    /// <returns>The flattened string.</returns>
     private static string FlattenContent(object? content)
     {
         if (content is null)
@@ -599,6 +645,11 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         return JsonSerializer.Serialize(content, SerializerOptions);
     }
 
+    /// <summary>
+    /// Flattens a JsonElement into a sanitized string representation.
+    /// </summary>
+    /// <param name="element">The JSON element.</param>
+    /// <returns>The flattened and sanitized string.</returns>
     private static string FlattenJsonElement(JsonElement element)
     {
         if (element.ValueKind == JsonValueKind.String)
@@ -614,49 +665,44 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         var parts = new List<string>();
         foreach (var item in element.EnumerateArray())
         {
-                if (item.ValueKind == JsonValueKind.Object && item.TryGetProperty("text", out var textProperty))
+            if (item.ValueKind == JsonValueKind.Object && item.TryGetProperty("text", out var textProperty))
+            {
+                var text = PromptTextSanitizer.Sanitize(textProperty.GetString() ?? string.Empty);
+                if (!string.IsNullOrWhiteSpace(text))
                 {
-                    var text = PromptTextSanitizer.Sanitize(textProperty.GetString() ?? string.Empty);
-                    if (!string.IsNullOrWhiteSpace(text))
-                    {
-                        parts.Add(text);
-                    }
+                    parts.Add(text);
                 }
             }
+        }
 
         return PromptTextSanitizer.Sanitize(string.Join("\n", parts));
     }
 
+    /// <summary>
+    /// Determines whether specific assistant text (e.g., thinking process) should be removed.
+    /// </summary>
+    /// <param name="text">The text to inspect.</param>
+    /// <returns><see langword="true"/> if the text should be dropped; otherwise <see langword="false"/>.</returns>
     private static bool ShouldDropAssistantPlanningText(string text)
     {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return true;
-        }
-
-        if (PromptTextSanitizer.ContainsClientHarness(text))
-        {
-            return true;
-        }
-
-        return text.StartsWith("Thinking:", StringComparison.OrdinalIgnoreCase)
-            || text.StartsWith("# Todos", StringComparison.Ordinal)
-            || text.StartsWith("Preparing for", StringComparison.OrdinalIgnoreCase)
-            || text.StartsWith("Deciding on", StringComparison.OrdinalIgnoreCase)
-            || text.StartsWith("I need to", StringComparison.OrdinalIgnoreCase)
-            || text.StartsWith("I’m ", StringComparison.OrdinalIgnoreCase)
-            || text.StartsWith("I'm ", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("todowrite", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("TaskCreate", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("AskUserQuestion", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("Plan mode", StringComparison.OrdinalIgnoreCase);
+        return PromptTextSanitizer.ShouldDropTransientText(text);
     }
 
+    /// <summary>
+    /// Returns the raw text of a JSON element or its decoded string value.
+    /// </summary>
+    /// <param name="element">The JSON element.</param>
+    /// <returns>The string content.</returns>
     private static string DecodeJsonStringOrRaw(JsonElement element)
     {
         return element.ValueKind == JsonValueKind.String ? element.GetString() ?? string.Empty : element.GetRawText();
     }
 
+    /// <summary>
+    /// Attempts to parse tool input JSON or returns a fallback dictionary with the raw text.
+    /// </summary>
+    /// <param name="argumentsText">The raw tool arguments text.</param>
+    /// <returns>The parsed input object or a fallback.</returns>
     private static object ParseToolInputOrFallback(string argumentsText)
     {
         if (string.IsNullOrWhiteSpace(argumentsText))
@@ -677,6 +723,11 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         }
     }
 
+    /// <summary>
+    /// Maps Anthropic thinking configuration to OpenAI reasoning effort levels.
+    /// </summary>
+    /// <param name="thinking">The thinking configuration.</param>
+    /// <returns>The effort level string, or <see langword="null"/>.</returns>
     private static string? MapReasoningEffort(AnthropicThinkingConfig? thinking)
     {
         if (thinking is null || string.Equals(thinking.Type, "disabled", StringComparison.OrdinalIgnoreCase))
@@ -692,6 +743,11 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         };
     }
 
+    /// <summary>
+    /// Maps OpenAI finish reasons to Anthropic stop reasons.
+    /// </summary>
+    /// <param name="finishReason">The OpenAI finish reason.</param>
+    /// <returns>The Anthropic stop reason.</returns>
     private static string MapStopReason(string? finishReason)
     {
         return finishReason switch
@@ -702,6 +758,11 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         };
     }
 
+    /// <summary>
+    /// Peeks into a request payload to see if it uses Anthropic-specific tool schema names.
+    /// </summary>
+    /// <param name="root">The root JSON element.</param>
+    /// <returns><see langword="true"/> if it looks like an Anthropic tool payload; otherwise <see langword="false"/>.</returns>
     private static bool LooksAnthropicToolPayload(JsonElement root)
     {
         if (!root.TryGetProperty("tools", out var toolsElement) || toolsElement.ValueKind != JsonValueKind.Array)
@@ -721,6 +782,11 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         return false;
     }
 
+    /// <summary>
+    /// Peeks into a request payload to see if it uses Anthropic-style message structures.
+    /// </summary>
+    /// <param name="root">The root JSON element.</param>
+    /// <returns><see langword="true"/> if it looks like an Anthropic message payload; otherwise <see langword="false"/>.</returns>
     private static bool LooksAnthropicMessagePayload(JsonElement root)
     {
         if (!root.TryGetProperty("messages", out var messagesElement) || messagesElement.ValueKind != JsonValueKind.Array)
@@ -744,6 +810,11 @@ public sealed class AnthropicMessageTranslator : IMessageTranslator
         return false;
     }
 
+    /// <summary>
+    /// Peeks into a content block to see if it contains Anthropic-specific block type identifiers.
+    /// </summary>
+    /// <param name="contentElement">The content block element.</param>
+    /// <returns><see langword="true"/> if it looks like an Anthropic content block; otherwise <see langword="false"/>.</returns>
     private static bool LooksAnthropicContentBlock(JsonElement contentElement)
     {
         if (contentElement.ValueKind != JsonValueKind.Array)

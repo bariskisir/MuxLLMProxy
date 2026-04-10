@@ -58,6 +58,14 @@ public static class HttpContextExtensions
         return context.Response.WriteAsync(JsonSerializer.Serialize(payload));
     }
 
+    /// <summary>
+    /// Writes an error response with the supplied exception conditionally exposing details in development.
+    /// </summary>
+    /// <param name="context">The HTTP context.</param>
+    /// <param name="statusCode">The HTTP status code.</param>
+    /// <param name="type">The error type string.</param>
+    /// <param name="exception">The exception to format into the message.</param>
+    /// <returns>A task that completes when the response is fully written.</returns>
     public static Task WriteErrorAsync(this HttpContext context, int statusCode, string type, Exception exception)
     {
         var environment = context.RequestServices.GetService<IWebHostEnvironment>();
@@ -70,3 +78,4 @@ public static class HttpContextExtensions
         return WriteErrorAsync(context, statusCode, type, message);
     }
 }
+
