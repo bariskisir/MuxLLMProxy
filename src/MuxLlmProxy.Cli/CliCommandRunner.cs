@@ -105,29 +105,47 @@ public sealed class CliCommandRunner
     private async Task RunLimitsAsync(CancellationToken cancellationToken)
     {
         var entries = await _limitsQueryService.GetLimitsAsync(cancellationToken);
-        if (entries.Count == 0)
+        var limitedEntries = entries
+            .Where(entry => entry.HasLimits && entry.Limit is not null)
+            .ToArray();
+
+        if (limitedEntries.Length == 0)
         {
             Console.WriteLine(ProxyConstants.Messages.NoAccountsConfigured);
             return;
         }
 
-        var rows = entries
-            .OrderBy(entry => Array.IndexOf(ProviderOrder, entry.TypeId))
-            .ThenBy(entry => entry.Id, StringComparer.OrdinalIgnoreCase)
-            .Select(entry => new[]
-            {
-                entry.TypeId,
-                NormalizeAccountName(entry),
-                FormatUsage(entry),
-                entry.HasLimits && entry.Limit is not null ? $"{entry.Limit.LeftPercent}%" : "-",
-                entry.HasLimits && entry.Limit is not null ? FormatReset(entry.Limit.ResetsAt) : "-"
-            })
+        Console.WriteLine(string.Format(CultureInfo.InvariantCulture, ProxyConstants.Messages.LoadedAccountLimitsFormat, limitedEntries.Length));
+        Console.WriteLine();
+
+        var providerGroups = limitedEntries
+            .GroupBy(entry => entry.TypeId, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(group => Array.IndexOf(ProviderOrder, group.Key))
+            .ThenBy(group => group.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new ProviderLimitGroup(group.Key, group.ToArray()))
             .ToArray();
 
-        RenderTable(
-            string.Format(CultureInfo.InvariantCulture, ProxyConstants.Messages.LoadedAccountLimitsFormat, entries.Count),
-            [ProxyConstants.Labels.Provider, ProxyConstants.Labels.Account, ProxyConstants.Labels.WeeklyLimit, ProxyConstants.Labels.Left, ProxyConstants.Labels.Resets],
-            rows);
+        var aggregateGroups = providerGroups
+            .Where(group => group.Entries.Length > 1)
+            .ToArray();
+
+        if (aggregateGroups.Length > 0)
+        {
+            Console.WriteLine("Provider totals");
+            Console.WriteLine();
+
+            foreach (var providerGroup in aggregateGroups)
+            {
+                RenderProviderAggregate(providerGroup);
+            }
+
+            Console.WriteLine();
+        }
+
+        foreach (var providerGroup in providerGroups)
+        {
+            RenderProviderLimits(providerGroup);
+        }
     }
 
     private static int ReadProviderSelection(int maxOption)
@@ -277,6 +295,42 @@ public sealed class CliCommandRunner
         return $"[{BuildBar(entry.Limit.LeftPercent)}]";
     }
 
+    private static void RenderProviderAggregate(ProviderLimitGroup group)
+    {
+        var totalCapacity = group.Entries.Length * 100;
+        var totalRemaining = group.Entries.Sum(entry => Math.Clamp(entry.Limit?.LeftPercent ?? 0, 0, 100));
+
+        Console.WriteLine($"{ToDisplayName(group.ProviderId)}: [{BuildAggregateBar(totalRemaining, totalCapacity)}] {totalRemaining}/{totalCapacity}");
+    }
+
+    private static void RenderProviderLimits(ProviderLimitGroup group)
+    {
+        var sortedEntries = group.Entries
+            .OrderByDescending(entry => entry.Limit?.LeftPercent ?? -1)
+            .ThenBy(entry => entry.Id, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        Console.WriteLine(ToDisplayName(group.ProviderId));
+        Console.WriteLine();
+
+        var rows = sortedEntries
+            .Select(entry => new[]
+            {
+                NormalizeAccountName(entry),
+                FormatUsage(entry),
+                $"{entry.Limit!.LeftPercent}%",
+                FormatReset(entry.Limit.ResetsAt)
+            })
+            .ToArray();
+
+        RenderTable(
+            null,
+            [ProxyConstants.Labels.Account, ProxyConstants.Labels.WeeklyLimit, ProxyConstants.Labels.Left, ProxyConstants.Labels.Resets],
+            rows);
+
+        Console.WriteLine();
+    }
+
     private static string BuildBar(int leftPercent)
     {
         const int barLength = ProxyConstants.Defaults.ProgressBarWidth;
@@ -285,19 +339,36 @@ public sealed class CliCommandRunner
         return new string('#', filledCount) + new string('.', barLength - filledCount);
     }
 
+    private static string BuildAggregateBar(int remaining, int capacity)
+    {
+        const int barLength = ProxyConstants.Defaults.ProgressBarWidth;
+        if (capacity <= 0)
+        {
+            return new string('.', barLength);
+        }
+
+        var clamped = Math.Clamp(remaining, 0, capacity);
+        var filledCount = (int)Math.Round(clamped / (double)capacity * barLength, MidpointRounding.AwayFromZero);
+        return new string('#', filledCount) + new string('.', barLength - filledCount);
+    }
+
     private static string FormatReset(long resetsAt)
     {
         return DateTimeOffset.FromUnixTimeSeconds(resetsAt).ToLocalTime().ToString("MMM dd, HH:mm", CultureInfo.InvariantCulture);
     }
 
-    private static void RenderTable(string title, string[] headers, string[][] rows)
+    private static void RenderTable(string? title, string[] headers, string[][] rows)
     {
         var widths = headers
             .Select((header, index) => Math.Max(header.Length, rows.Max(row => row[index].Length)))
             .ToArray();
 
-        Console.WriteLine(title);
-        Console.WriteLine();
+        if (!string.IsNullOrWhiteSpace(title))
+        {
+            Console.WriteLine(title);
+            Console.WriteLine();
+        }
+
         Console.WriteLine(BuildTableRow(headers, widths));
         Console.WriteLine(BuildSeparator(widths));
         foreach (var row in rows)
@@ -430,5 +501,6 @@ public sealed class CliCommandRunner
             ?? JwtUtilities.TryReadStringClaim(token, "email");
     }
 
+    private sealed record ProviderLimitGroup(string ProviderId, LimitEntry[] Entries);
     private sealed record TokenResult(string Access, string Refresh, long ExpiresAt);
 }
