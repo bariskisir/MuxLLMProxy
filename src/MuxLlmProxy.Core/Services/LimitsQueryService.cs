@@ -55,6 +55,7 @@ public sealed class LimitsQueryService : ILimitsQueryService
                 TypeId = providerType.Id,
                 Id = account.Id,
                 HasLimits = providerType.TracksAvailabilityWindows,
+                Token = account.Access,
                 Limit = snapshot
             };
         });
