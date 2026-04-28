@@ -46,13 +46,7 @@ public sealed class ProxyRequestParser : IProxyRequestParser
             });
         }
 
-        var anthropicRequest = JsonSerializer.Deserialize<AnthropicMessagesRequest>(body, SerializerOptions)
-            ?? throw new InvalidOperationException("The request body is required.");
-
-        if (string.IsNullOrWhiteSpace(anthropicRequest.Model))
-        {
-            throw new InvalidOperationException("The request model is required.");
-        }
+        var anthropicRequest = ParseAnthropic(body);
 
         return Task.FromResult(new ProxyRequest
         {
@@ -131,5 +125,34 @@ public sealed class ProxyRequestParser : IProxyRequestParser
             stream = false;
             return false;
         }
+    }
+
+    private static (string Model, bool Stream) ParseAnthropic(byte[] body)
+    {
+        using var document = JsonDocument.Parse(body);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            throw new InvalidOperationException("The request body is required.");
+        }
+
+        if (!root.TryGetProperty("model", out var modelElement)
+            || modelElement.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(modelElement.GetString()))
+        {
+            throw new InvalidOperationException("The request model is required.");
+        }
+
+        if (!root.TryGetProperty("messages", out var messagesElement)
+            || messagesElement.ValueKind != JsonValueKind.Array)
+        {
+            throw new InvalidOperationException("The request messages are required.");
+        }
+
+        var stream = !root.TryGetProperty("stream", out var streamElement)
+            || streamElement.ValueKind is not (JsonValueKind.True or JsonValueKind.False)
+            || streamElement.GetBoolean();
+
+        return (modelElement.GetString()!, stream);
     }
 }

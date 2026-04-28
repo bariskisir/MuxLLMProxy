@@ -41,6 +41,10 @@ public sealed record LimitEntry
     /// Gets the optional limit snapshot.
     /// </summary>
     public ProviderLimitSnapshot? Limit { get; init; }
+
+    /// <summary>
+    /// Gets the optional account token value.
+    /// </summary>
     public string? Token { get; internal set; }
 }
 
