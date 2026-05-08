@@ -16,6 +16,14 @@
   },
   {
     "providerId": "chatgpt",
+    "id": "gpt-5.5",
+    "name": "GPT-5.5",
+    "aliases": [],
+    "supportsXHigh": true,
+    "supportsNone": true
+  },  
+  {
+    "providerId": "chatgpt",
     "id": "gpt-5.4",
     "name": "GPT-5.4",
     "aliases": [],
