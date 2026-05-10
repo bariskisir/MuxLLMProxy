@@ -43,19 +43,33 @@ public sealed class LimitsQueryService : ILimitsQueryService
                 return null;
             }
 
-            ProviderLimitSnapshot? snapshot = null;
-            if (providerType.TracksAvailabilityWindows)
-            {
-                var adapter = _providerAdapterResolver.Resolve(providerType.Id);
-                snapshot = await adapter.GetLimitSnapshotAsync(new ProxyTarget(account, providerType), cancellationToken);
-            }
-
-            return new LimitEntry
+            var entry = new LimitEntry
             {
                 TypeId = providerType.Id,
                 Id = account.Id,
                 HasLimits = providerType.TracksAvailabilityWindows,
-                Token = account.Access,
+                Token = account.Access
+            };
+
+            ProviderLimitSnapshot? snapshot = null;
+            if (providerType.TracksAvailabilityWindows)
+            {
+                try
+                {
+                    var adapter = _providerAdapterResolver.Resolve(providerType.Id);
+                    snapshot = await adapter.GetLimitSnapshotAsync(new ProxyTarget(account, providerType), cancellationToken);
+                }
+                catch (Exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    return entry with
+                    {
+                        Failed = true
+                    };
+                }
+            }
+
+            return entry with
+            {
                 Limit = snapshot
             };
         });

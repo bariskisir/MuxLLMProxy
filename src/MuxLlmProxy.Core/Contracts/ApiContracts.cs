@@ -43,6 +43,12 @@ public sealed record LimitEntry
     public ProviderLimitSnapshot? Limit { get; init; }
 
     /// <summary>
+    /// Gets a value indicating whether reading the account limits failed.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Failed { get; init; }
+
+    /// <summary>
     /// Gets the optional account token value.
     /// </summary>
     public string? Token { get; internal set; }

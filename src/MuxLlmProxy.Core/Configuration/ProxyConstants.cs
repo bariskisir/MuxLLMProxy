@@ -17,7 +17,7 @@ public static class ProxyConstants
         public const int TimeoutSeconds = 60;
 
         /// <summary>The interval between weekly limit synchronizations in minutes.</summary>
-        public const int WeeklyLimitSyncIntervalMinutes = 10;
+        public const int WeeklyLimitSyncIntervalMinutes = 60;
 
         /// <summary>The fallback cooldown duration in minutes after a rate-limit error.</summary>
         public const int RetryAfterFallbackMinutes = 15;
